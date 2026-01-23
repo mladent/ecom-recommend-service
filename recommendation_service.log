@@ -1,0 +1,54 @@
+2026-01-23 16:50:05,659 - __main__ - INFO - E-Commerce Bundle Recommendation Service
+2026-01-23 16:50:05,659 - __main__ - INFO - ============================================================
+2026-01-23 16:50:05,659 - __main__ - INFO - Starting data download...
+2026-01-23 16:50:05,928 - src.data_pipeline - INFO - Downloading dataset: carrie1/ecommerce-data
+2026-01-23 16:50:08,722 - src.data_pipeline - INFO - Dataset downloaded to: ./data
+2026-01-23 16:50:08,723 - __main__ - INFO - ============================================================
+2026-01-23 16:50:08,723 - __main__ - INFO - Service completed successfully
+2026-01-23 16:52:25,401 - __main__ - INFO - E-Commerce Bundle Recommendation Service
+2026-01-23 16:52:25,401 - __main__ - INFO - ============================================================
+2026-01-23 16:52:25,401 - __main__ - INFO - Starting data download...
+2026-01-23 16:52:25,561 - src.data_pipeline - INFO - Downloading dataset: carrie1/ecommerce-data
+2026-01-23 16:52:28,999 - src.data_pipeline - INFO - Dataset downloaded to: ./data
+2026-01-23 16:52:29,000 - __main__ - INFO - Preparing data...
+2026-01-23 16:52:29,000 - __main__ - INFO - Loading raw data...
+2026-01-23 16:52:29,001 - src.data_pipeline - INFO - Loading raw data from: ./data/data.csv
+2026-01-23 16:52:29,548 - src.data_pipeline - INFO - Loaded 541909 records, 8 columns
+2026-01-23 16:52:29,548 - __main__ - INFO - Exploring data...
+2026-01-23 16:52:30,277 - src.data_pipeline - INFO - Dataset Statistics: {'shape': (541909, 8), 'columns': ['InvoiceNo', 'StockCode', 'Description', 'Quantity', 'InvoiceDate', 'UnitPrice', 'CustomerID', 'Country'], 'dtypes': {'InvoiceNo': <StringDtype(storage='python', na_value=nan)>, 'StockCode': <StringDtype(storage='python', na_value=nan)>, 'Description': <StringDtype(storage='python', na_value=nan)>, 'Quantity': dtype('int64'), 'InvoiceDate': <StringDtype(storage='python', na_value=nan)>, 'UnitPrice': dtype('float64'), 'CustomerID': dtype('float64'), 'Country': <StringDtype(storage='python', na_value=nan)>}, 'missing_values': {'InvoiceNo': 0, 'StockCode': 0, 'Description': 1454, 'Quantity': 0, 'InvoiceDate': 0, 'UnitPrice': 0, 'CustomerID': 135080, 'Country': 0}, 'duplicates': np.int64(5268), 'date_range': ('2010-12-01 08:26:00', '2011-12-09 12:50:00'), 'unique_customers': 4372, 'unique_products': 4223}
+2026-01-23 16:52:30,277 - __main__ - INFO -   shape: (541909, 8)
+2026-01-23 16:52:30,277 - __main__ - INFO -   columns: ['InvoiceNo', 'StockCode', 'Description', 'Quantity', 'InvoiceDate', 'UnitPrice', 'CustomerID', 'Country']
+2026-01-23 16:52:30,277 - __main__ - INFO -   dtypes: {'InvoiceNo': <StringDtype(storage='python', na_value=nan)>, 'StockCode': <StringDtype(storage='python', na_value=nan)>, 'Description': <StringDtype(storage='python', na_value=nan)>, 'Quantity': dtype('int64'), 'InvoiceDate': <StringDtype(storage='python', na_value=nan)>, 'UnitPrice': dtype('float64'), 'CustomerID': dtype('float64'), 'Country': <StringDtype(storage='python', na_value=nan)>}
+2026-01-23 16:52:30,277 - __main__ - INFO -   missing_values: {'InvoiceNo': 0, 'StockCode': 0, 'Description': 1454, 'Quantity': 0, 'InvoiceDate': 0, 'UnitPrice': 0, 'CustomerID': 135080, 'Country': 0}
+2026-01-23 16:52:30,278 - __main__ - INFO -   duplicates: 5268
+2026-01-23 16:52:30,278 - __main__ - INFO -   date_range: ('2010-12-01 08:26:00', '2011-12-09 12:50:00')
+2026-01-23 16:52:30,278 - __main__ - INFO -   unique_customers: 4372
+2026-01-23 16:52:30,278 - __main__ - INFO -   unique_products: 4223
+2026-01-23 16:52:30,278 - __main__ - INFO - Preprocessing data...
+2026-01-23 16:52:30,278 - src.data_pipeline - INFO - Starting data preprocessing...
+2026-01-23 16:52:30,373 - src.data_pipeline - INFO - Removed 135080 rows with missing CustomerID
+2026-01-23 16:52:30,391 - src.data_pipeline - INFO - Removed 0 rows with missing Description
+2026-01-23 16:52:30,438 - src.data_pipeline - INFO - Removed cancellations (negative quantities)
+2026-01-23 16:52:30,482 - src.data_pipeline - INFO - Removed rows with zero or negative prices
+2026-01-23 16:52:30,817 - src.data_pipeline - INFO - Removed 10043 duplicate transactions
+2026-01-23 16:52:30,818 - src.data_pipeline - INFO - Preprocessing complete. Final dataset: 387841 records
+2026-01-23 16:52:30,818 - __main__ - INFO - Creating transaction baskets...
+2026-01-23 16:52:30,818 - src.data_pipeline - INFO - Creating transaction baskets...
+2026-01-23 16:52:31,487 - src.data_pipeline - INFO - Created 17125 transaction baskets with multiple items
+2026-01-23 16:52:31,487 - __main__ - INFO - Generating bundles...
+2026-01-23 16:52:31,488 - src.data_pipeline - INFO - Generating bundles (min_support=0.02, min_confidence=0.5)...
+2026-01-23 16:52:31,550 - src.data_pipeline - INFO - Found 236 frequent items (support >= 0.02)
+2026-01-23 17:03:40,146 - src.data_pipeline - INFO - Generated 45 bundles of size 2
+2026-01-23 17:03:42,218 - src.data_pipeline - INFO - Generated 1 bundles of size 3
+2026-01-23 17:03:42,219 - src.data_pipeline - INFO - Total bundles generated: 46
+2026-01-23 17:03:42,219 - __main__ - INFO - Saving processed data...
+2026-01-23 17:03:42,428 - src.data_pipeline - INFO - Processed data saved to: ./data/processed_data.pkl
+2026-01-23 17:03:42,438 - __main__ - INFO - Bundle statistics: {'total_bundles': 46, 'min_bundle_size': 2, 'max_bundle_size': 3, 'avg_bundle_size': np.float64(2.0217391304347827), 'bundle_size_distribution': {2: 45, 3: 1}, 'top_10_bundles': [('red hanging heart t-light holder', 'white hanging heart t-light holder'), ('alarm clock bakelike pink', 'alarm clock bakelike red'), ('alarm clock bakelike green', 'alarm clock bakelike pink'), ('alarm clock bakelike green', 'alarm clock bakelike red'), ('dolly girl lunch box', 'spaceboy lunch box'), ('wooden frame antique white', 'wooden picture frame white finish'), ('jumbo bag pink polkadot', 'jumbo bag red retrospot'), ('jumbo  bag baroque black white', 'jumbo bag red retrospot'), ('jumbo bag red retrospot', 'lunch bag red retrospot'), ('lunch bag red retrospot', 'lunch bag spaceboy design')]}
+2026-01-23 17:03:42,438 - __main__ - INFO - Preparing data...
+2026-01-23 17:03:42,438 - __main__ - INFO - Processed data found at ./data/processed_data.pkl
+2026-01-23 17:03:42,555 - src.data_pipeline - INFO - Processed data loaded from: ./data/processed_data.pkl
+2026-01-23 17:03:42,555 - __main__ - INFO - Using cached processed data
+2026-01-23 17:03:42,584 - __main__ - INFO - Training recommendation engine...
+2026-01-23 17:03:42,586 - __main__ - INFO - Adding Naive Bayes recommender...
+2026-01-23 17:03:42,586 - src.recommendation_engine - INFO - Added recommender: naive_bayes
+2026-01-23 17:03:42,586 - __main__ - INFO - Adding SVM recommender...

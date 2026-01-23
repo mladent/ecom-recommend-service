@@ -46,7 +46,10 @@ ecom-recommend-service/
    ```
 
 2. **Configure Kaggle credentials**:
-   - Create a `.env` file from `.env-template`
+- Create a `.env` file from `.env-template`:
+```bash
+cp .env-template .env
+```
    - Add your Kaggle API credentials (get them from https://www.kaggle.com/settings/account)
    - Or place `kaggle.json` in `~/.kaggle/` directory
 

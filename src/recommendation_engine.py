@@ -185,7 +185,7 @@ class SVMBundleRecommender(BaseRecommender):
         super().__init__(name="SVMBundleRecommender")
         self.kernel = kernel
         self.C = C
-        self.model = SVC(kernel=kernel, C=C, probability=True, random_state=RANDOM_STATE, n_jobs=N_JOBS)
+        self.model = SVC(kernel=kernel, C=C, probability=True, random_state=RANDOM_STATE)
         self.mlb = MultiLabelBinarizer()
         self.scaler = StandardScaler()
         self.feature_names = None

@@ -40,6 +40,12 @@ class DataPipeline:
         Returns:
             bool: True if successful, False otherwise
         """
+        # Check if data already exists
+        if os.path.exists(RAW_DATA_PATH):
+            logger.info(f"Dataset already exists at: {RAW_DATA_PATH}")
+            logger.info("Skipping download and continuing with processing")
+            return True
+
         try:
             from kaggle.api.kaggle_api_extended import KaggleApi
 
