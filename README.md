@@ -53,12 +53,36 @@ cp .env-template .env
    - Add your Kaggle API credentials (get them from https://www.kaggle.com/settings/account)
    - Or place `kaggle.json` in `~/.kaggle/` directory
 
-3. **Download dataset**:
-   ```bash
-   python main.py --download
-   ```
+
+### Activating the Environment
+Before running any scripts, always ensure the virtual environment is activated:
+```bash
+source venv/bin/activate  # On Linux/macOS
+# OR
+venv\Scripts\activate     # On Windows
+```
+
 
 ## Usage
+
+### Download dataset
+```bash
+python main.py --download
+```
+
+### Full Pipeline
+To run the entire service (download, prepare data, train models, and run a demo):
+```bash
+python main.py --full
+```
+
+### Other Options
+You can also run specific parts of the pipeline:
+- **Prepare data**: `python main.py --prepare`
+- **Train models**: `python main.py --train`
+- **Run demo**: `python main.py --demo`
+- **Reprocess data**: `python main.py --prepare --reprocess` (forces reprocessing even if cache exists)
+
 
 ### Data Pipeline
 

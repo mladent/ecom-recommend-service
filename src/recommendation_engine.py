@@ -113,8 +113,10 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 
         # Handle dense/sparse for Gaussian NB
         if self.model_type == "gaussian":
-            X_train = X_train.toarray()
-            X_test = X_test.toarray()
+            if hasattr(X_train, "toarray"):
+                X_train = X_train.toarray()
+            if hasattr(X_test, "toarray"):
+                X_test = X_test.toarray()
 
         # Fit model
         self.model.fit(X_train, y_train)
@@ -147,7 +149,8 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 
         X = self.mlb.transform(transactions)
         if self.model_type == "gaussian":
-            X = X.toarray()
+            if hasattr(X, "toarray"):
+                X = X.toarray()
 
         return self.model.predict(X)
 
@@ -166,7 +169,8 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 
         X = self.mlb.transform(transactions)
         if self.model_type == "gaussian":
-            X = X.toarray()
+            if hasattr(X, "toarray"):
+                X = X.toarray()
 
         return self.model.predict_proba(X)
 
@@ -215,7 +219,7 @@ class SVMBundleRecommender(BaseRecommender):
         self.feature_names = self.mlb.classes_
 
         # Convert to dense and scale
-        X_dense = X.toarray()
+        X_dense = X.toarray() if hasattr(X, "toarray") else X
         X_scaled = self.scaler.fit_transform(X_dense)
 
         # Create binary labels for each bundle
@@ -261,7 +265,8 @@ class SVMBundleRecommender(BaseRecommender):
             raise ValueError("Model not fitted. Call fit() first.")
 
         X = self.mlb.transform(transactions)
-        X_scaled = self.scaler.transform(X.toarray())
+        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_scaled = self.scaler.transform(X_dense)
         return self.model.predict(X_scaled)
 
     def predict_proba(self, transactions: List[List[str]]) -> np.ndarray:
@@ -278,7 +283,8 @@ class SVMBundleRecommender(BaseRecommender):
             raise ValueError("Model not fitted. Call fit() first.")
 
         X = self.mlb.transform(transactions)
-        X_scaled = self.scaler.transform(X.toarray())
+        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_scaled = self.scaler.transform(X_dense)
         return self.model.predict_proba(X_scaled)
 
 
