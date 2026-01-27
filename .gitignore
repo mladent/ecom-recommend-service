@@ -8,6 +8,8 @@ data/*.csv
 data/*.pkl
 data/*.xlsx
 data/*.zip
+data/categories_*.txt
+data/data_report.md
 !data/.gitkeep
 
 # Python
