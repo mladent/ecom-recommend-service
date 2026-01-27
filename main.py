@@ -8,6 +8,7 @@ from pathlib import Path
 
 from src.config import validate_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C, MODELS_PATH
 from src.data_pipeline import DataPipeline
+from src.data_evaluator import DataEvaluator
 from src.recommendation_engine import (
     BundleRecommendationEngine,
     NaiveBayesBundleRecommender,
@@ -148,6 +149,65 @@ def demo_recommendations(engine: BundleRecommendationEngine):
                 logger.info(f"  - {product} (score: {score:.2f})")
 
 
+def evaluate_data():
+    """Evaluate and analyze raw dataset."""
+    logger.info("Starting data evaluation and analysis...")
+
+    # Load raw data
+    if not os.path.exists(RAW_DATA_PATH):
+        logger.error(f"Raw data not found at {RAW_DATA_PATH}")
+        logger.info("Please download data first using: python main.py --download")
+        return False
+
+    try:
+        import pandas as pd
+        logger.info(f"Loading data from {RAW_DATA_PATH}...")
+        df = pd.read_csv(RAW_DATA_PATH, encoding="latin1")
+        logger.info(f"Loaded {len(df):,} rows and {len(df.columns)} columns")
+
+        # Run evaluation
+        evaluator = DataEvaluator(df, data_path="data")
+        report = evaluator.evaluate()
+
+        # Save report
+        report_path = evaluator.save_report()
+        logger.info(f"Data evaluation complete!")
+        logger.info(f"Report saved to: {report_path}")
+        logger.info(f"Category files saved to: data/categories_*.txt")
+
+        # Print summary
+        logger.info("\n" + "=" * 80)
+        logger.info("EVALUATION SUMMARY")
+        logger.info("=" * 80)
+
+        overview = report["dataset_overview"]
+        logger.info(f"Rows: {overview['total_rows']:,} | Columns: {overview['total_columns']}")
+        logger.info(f"Memory: {overview['memory_usage_mb']:.2f} MB")
+
+        quality = report["data_quality"]
+        logger.info(f"\nData Quality Issues:")
+        logger.info(f"  Duplicate rows: {quality['duplicate_rows']}")
+        logger.info(f"  Fully null columns: {len(quality['fully_null_columns'])}")
+
+        missing_count = sum(quality["missing_values"].values())
+        logger.info(f"  Total missing values: {missing_count}")
+
+        logger.info("\nColumn Analysis Summary:")
+        for col in df.columns:
+            col_report = report["columns"][col]
+            null_pct = col_report["null_percentage"]
+            unique = col_report["unique_count"]
+            logger.info(f"  {col:20s}: {unique:6,} unique, {null_pct:5.1f}% missing")
+
+        logger.info("=" * 80)
+        return True
+
+    except Exception as e:
+        logger.error(f"Error during data evaluation: {e}")
+        logger.exception(e)
+        return False
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="E-commerce Bundle Recommendation Service")
@@ -175,6 +235,11 @@ def main():
         "--full",
         action="store_true",
         help="Run complete pipeline (download, prepare, train, demo)",
+    )
+    parser.add_argument(
+        "--evaluate-data",
+        action="store_true",
+        help="Evaluate and analyze raw dataset (generates data_report.md)",
     )
     parser.add_argument(
         "--reprocess",
@@ -230,7 +295,11 @@ def main():
         engine.load_model(model_file)
         demo_recommendations(engine)
 
-    if not any([args.download, args.prepare, args.train, args.demo, args.full]):
+    if args.evaluate_data:
+        if not evaluate_data():
+            return 1
+
+    if not any([args.download, args.prepare, args.train, args.demo, args.full, args.evaluate_data]):
         logger.info("No action specified. Use --help for options.")
         logger.info("Quick start: python main.py --full")
         return 0
