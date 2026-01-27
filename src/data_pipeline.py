@@ -199,7 +199,7 @@ class DataPipeline:
         return baskets
 
     def generate_product_bundles(
-        self, min_support: float = MIN_SUPPORT, min_confidence: float = MIN_CONFIDENCE
+        self, min_support: float = MIN_SUPPORT, min_confidence: float = MIN_CONFIDENCE, max_size: int = MAX_BUNDLE_SIZE
     ) -> List[Tuple]:
         """
         Generate product bundles using frequent itemset analysis (Apriori-like approach).
@@ -207,6 +207,7 @@ class DataPipeline:
         Args:
             min_support: Minimum support threshold (fraction of transactions)
             min_confidence: Minimum confidence threshold
+            max_size: Maximum bundle size (can be reduced for speed)
 
         Returns:
             List of product bundles (tuples of products)
@@ -215,7 +216,7 @@ class DataPipeline:
             raise ValueError("Transaction baskets not created. Call create_transaction_baskets first.")
 
         logger.info(
-            f"Generating bundles (min_support={min_support}, min_confidence={min_confidence})..."
+            f"Generating bundles (min_support={min_support}, min_confidence={min_confidence}, max_size={max_size})..."
         )
 
         # Calculate item frequencies
@@ -235,31 +236,34 @@ class DataPipeline:
 
         logger.info(f"Found {len(frequent_items)} frequent items (support >= {min_support})")
 
+        # Pre-compute transaction item sets for O(1) lookup performance
+        transaction_sets = [set(items) for items in self.transactions["Items"]]
+        support_threshold = min_support * total_transactions
+
         # Generate itemsets of increasing size
         bundles = []
         current_itemsets = [[item] for item in frequent_items.keys()]
 
-        for size in range(2, MAX_BUNDLE_SIZE + 1):
-            # Generate candidate itemsets
-            candidates = []
+        for size in range(2, max_size + 1):
+            # Generate candidate itemsets using set for O(1) duplicate checking (instead of O(n) list lookup)
+            candidates_set = set()
             for i in range(len(current_itemsets)):
                 for j in range(i + 1, len(current_itemsets)):
                     union = sorted(list(set(current_itemsets[i]) | set(current_itemsets[j])))
-                    if len(union) == size and union not in candidates:
-                        candidates.append(union)
+                    if len(union) == size:
+                        candidates_set.add(tuple(union))  # Use set for fast O(1) lookup
 
-            if not candidates:
+            if not candidates_set:
                 break
+            
+            logger.info(f"Created candidates_set with {len(candidates_set)} candidates of size {size}")
 
-            # Calculate support for candidates
+            # Calculate support for candidates using pre-computed transaction sets
             valid_itemsets = []
-            for candidate in candidates:
-                support = sum(
-                    1
-                    for items in self.transactions["Items"]
-                    if all(item in items for item in candidate)
-                )
-                if support / total_transactions >= min_support:
+            for candidate in candidates_set:
+                candidate_set = set(candidate)
+                support = sum(1 for trans_set in transaction_sets if candidate_set.issubset(trans_set))
+                if support >= support_threshold:
                     valid_itemsets.append(tuple(candidate))
                     bundles.append(tuple(candidate))
 
