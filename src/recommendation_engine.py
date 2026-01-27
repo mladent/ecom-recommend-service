@@ -359,13 +359,6 @@ class BundleRecommendationEngine:
         if not self.bundles:
             raise ValueError("Bundles not set. Call fit_all first.")
 
-        recommendations = {
-            "transaction": customer_transaction,
-            "bundles": [],
-            "confidence": [],
-            "recommender": recommender_name or "ensemble",
-        }
-
         if recommender_name:
             # Use specific recommender
             if recommender_name not in self.recommenders:
@@ -383,6 +376,14 @@ class BundleRecommendationEngine:
                 probas.append(proba[0, 1] if proba.shape[1] > 1 else proba[0, 0])
             confidence = np.mean(probas)
 
+        # Initialize recommendations with confidence score
+        recommendations = {
+            "transaction": customer_transaction,
+            "bundles": [],
+            "confidence": float(confidence),
+            "recommender": recommender_name or "ensemble",
+        }
+
         if confidence >= threshold:
             # Find applicable bundles
             applicable_bundles = []
@@ -393,7 +394,6 @@ class BundleRecommendationEngine:
                     applicable_bundles.append(bundle)
 
             recommendations["bundles"] = applicable_bundles[:5]  # Top 5
-            recommendations["confidence"] = float(confidence)
 
         return recommendations
 

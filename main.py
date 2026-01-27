@@ -6,7 +6,7 @@ import logging
 import argparse
 from pathlib import Path
 
-from src.config import validate_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C
+from src.config import validate_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C, MODELS_PATH
 from src.data_pipeline import DataPipeline
 from src.recommendation_engine import (
     BundleRecommendationEngine,
@@ -114,8 +114,8 @@ def train_recommenders(pipeline: DataPipeline):
 
     # Save model
     logger.info("Saving trained model...")
-    models_path = os.path.join(os.path.dirname(__file__), "..", "models", "recommendation_engine.pkl")
-    engine.save_model(models_path)
+    model_file = os.path.join(MODELS_PATH, "recommendation_engine.pkl")
+    engine.save_model(model_file)
 
     logger.info(f"Engine statistics: {engine.get_engine_stats()}")
 
@@ -220,14 +220,14 @@ def main():
 
     if args.demo or args.full:
         # Load trained engine
-        models_path = os.path.join(os.path.dirname(__file__), "..", "models", "recommendation_engine.pkl")
-        if not os.path.exists(models_path):
-            logger.error(f"Trained model not found at {models_path}")
+        model_file = os.path.join(MODELS_PATH, "recommendation_engine.pkl")
+        if not os.path.exists(model_file):
+            logger.error(f"Trained model not found at {model_file}")
             logger.info("Please train the model first using: python main.py --train")
             return 1
 
         engine = BundleRecommendationEngine()
-        engine.load_model(models_path)
+        engine.load_model(model_file)
         demo_recommendations(engine)
 
     if not any([args.download, args.prepare, args.train, args.demo, args.full]):
