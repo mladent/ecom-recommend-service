@@ -21,6 +21,7 @@ from sklearn.metrics import (
 )
 
 from src.config import RANDOM_STATE, TRAIN_TEST_SPLIT, N_JOBS, SVM_KERNEL, SVM_C
+from src.data_splitter import RandomSplit, KFoldSplit, BundleDataPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         validation_split: float = TRAIN_TEST_SPLIT,
     ) -> Dict:
         """
-        Fit the Naive Bayes model.
+        Fit the Naive Bayes model using random train-test split.
 
         Args:
             transactions: List of transaction items
@@ -92,7 +93,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         Returns:
             dict: Training metrics
         """
-        logger.info(f"Fitting {self.name}...")
+        logger.info(f"Fitting {self.name} with random split...")
 
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
@@ -133,6 +134,89 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 
         logger.info(f"Training metrics: {metrics}")
         return metrics
+
+    def fit_with_splitter(
+        self,
+        transactions: List[List[str]],
+        bundles: List[Tuple[str, ...]],
+        splitter,
+    ) -> Dict:
+        """
+        Fit the Naive Bayes model with custom data splitter (random or k-fold).
+
+        Args:
+            transactions: List of transaction items
+            bundles: List of product bundles
+            splitter: DataSplitter instance (RandomSplit or KFoldSplit)
+
+        Returns:
+            dict: Aggregated metrics across all splits
+        """
+        logger.info(f"Fitting {self.name} with {splitter.get_split_info()['strategy']}...")
+
+        # Prepare features and labels
+        X = self.mlb.fit_transform(transactions)
+        self.feature_names = self.mlb.classes_
+
+        # Create binary labels for each bundle
+        y = np.zeros(len(transactions), dtype=int)
+        for i, items in enumerate(transactions):
+            for bundle in bundles:
+                if all(item in items for item in bundle):
+                    y[i] = 1
+                    break
+
+        # Iterate through splits
+        all_metrics = []
+        for split_num, (X_train, X_test, y_train, y_test) in enumerate(splitter.split(X, y)):
+            logger.info(f"Processing split {split_num + 1}...")
+
+            # Handle dense/sparse for Gaussian NB
+            X_train_proc = X_train
+            X_test_proc = X_test
+            if self.model_type == "gaussian":
+                if hasattr(X_train_proc, "toarray"):
+                    X_train_proc = X_train_proc.toarray()
+                if hasattr(X_test_proc, "toarray"):
+                    X_test_proc = X_test_proc.toarray()
+
+            # Fit model
+            model = (
+                MultinomialNB()
+                if self.model_type == "multinomial"
+                else GaussianNB()
+            )
+            model.fit(X_train_proc, y_train)
+
+            # Evaluate
+            y_pred = model.predict(X_test_proc)
+            metrics = {
+                "accuracy": accuracy_score(y_test, y_pred),
+                "precision": precision_score(y_test, y_pred, zero_division=0),
+                "recall": recall_score(y_test, y_pred, zero_division=0),
+                "f1": f1_score(y_test, y_pred, zero_division=0),
+            }
+            all_metrics.append(metrics)
+
+        # Use the last model as the fitted model
+        self.model = model
+        self.is_fitted = True
+
+        # Average metrics across splits
+        avg_metrics = {
+            "accuracy": np.mean([m["accuracy"] for m in all_metrics]),
+            "precision": np.mean([m["precision"] for m in all_metrics]),
+            "recall": np.mean([m["recall"] for m in all_metrics]),
+            "f1": np.mean([m["f1"] for m in all_metrics]),
+            "std_accuracy": np.std([m["accuracy"] for m in all_metrics]),
+            "std_precision": np.std([m["precision"] for m in all_metrics]),
+            "std_recall": np.std([m["recall"] for m in all_metrics]),
+            "std_f1": np.std([m["f1"] for m in all_metrics]),
+            "n_splits": len(all_metrics),
+        }
+
+        logger.info(f"Aggregated metrics: {avg_metrics}")
+        return avg_metrics
 
     def predict(self, transactions: List[List[str]]) -> np.ndarray:
         """
@@ -202,7 +286,7 @@ class SVMBundleRecommender(BaseRecommender):
         validation_split: float = TRAIN_TEST_SPLIT,
     ) -> Dict:
         """
-        Fit the SVM model.
+        Fit the SVM model using random train-test split.
 
         Args:
             transactions: List of transaction items
@@ -212,7 +296,7 @@ class SVMBundleRecommender(BaseRecommender):
         Returns:
             dict: Training metrics
         """
-        logger.info(f"Fitting {self.name} with kernel={self.kernel}, C={self.C}...")
+        logger.info(f"Fitting {self.name} with kernel={self.kernel}, C={self.C} using random split...")
 
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
@@ -250,6 +334,85 @@ class SVMBundleRecommender(BaseRecommender):
 
         logger.info(f"Training metrics: {metrics}")
         return metrics
+
+    def fit_with_splitter(
+        self,
+        transactions: List[List[str]],
+        bundles: List[Tuple[str, ...]],
+        splitter,
+    ) -> Dict:
+        """
+        Fit the SVM model with custom data splitter (random or k-fold).
+
+        Args:
+            transactions: List of transaction items
+            bundles: List of product bundles
+            splitter: DataSplitter instance (RandomSplit or KFoldSplit)
+
+        Returns:
+            dict: Aggregated metrics across all splits
+        """
+        logger.info(f"Fitting {self.name} with {splitter.get_split_info()['strategy']}...")
+
+        # Prepare features and labels
+        X = self.mlb.fit_transform(transactions)
+        self.feature_names = self.mlb.classes_
+
+        # Convert to dense and scale
+        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_scaled = self.scaler.fit_transform(X_dense)
+
+        # Create binary labels for each bundle
+        y = np.zeros(len(transactions), dtype=int)
+        for i, items in enumerate(transactions):
+            for bundle in bundles:
+                if all(item in items for item in bundle):
+                    y[i] = 1
+                    break
+
+        # Iterate through splits
+        all_metrics = []
+        for split_num, (X_train, X_test, y_train, y_test) in enumerate(splitter.split(X_scaled, y)):
+            logger.info(f"Processing split {split_num + 1}...")
+
+            # Fit model
+            model = SVC(
+                kernel=self.kernel,
+                C=self.C,
+                probability=True,
+                random_state=RANDOM_STATE,
+            )
+            model.fit(X_train, y_train)
+
+            # Evaluate
+            y_pred = model.predict(X_test)
+            metrics = {
+                "accuracy": accuracy_score(y_test, y_pred),
+                "precision": precision_score(y_test, y_pred, zero_division=0),
+                "recall": recall_score(y_test, y_pred, zero_division=0),
+                "f1": f1_score(y_test, y_pred, zero_division=0),
+            }
+            all_metrics.append(metrics)
+
+        # Use the last model as the fitted model
+        self.model = model
+        self.is_fitted = True
+
+        # Average metrics across splits
+        avg_metrics = {
+            "accuracy": np.mean([m["accuracy"] for m in all_metrics]),
+            "precision": np.mean([m["precision"] for m in all_metrics]),
+            "recall": np.mean([m["recall"] for m in all_metrics]),
+            "f1": np.mean([m["f1"] for m in all_metrics]),
+            "std_accuracy": np.std([m["accuracy"] for m in all_metrics]),
+            "std_precision": np.std([m["precision"] for m in all_metrics]),
+            "std_recall": np.std([m["recall"] for m in all_metrics]),
+            "std_f1": np.std([m["f1"] for m in all_metrics]),
+            "n_splits": len(all_metrics),
+        }
+
+        logger.info(f"Aggregated metrics: {avg_metrics}")
+        return avg_metrics
 
     def predict(self, transactions: List[List[str]]) -> np.ndarray:
         """
@@ -316,7 +479,7 @@ class BundleRecommendationEngine:
         validation_split: float = TRAIN_TEST_SPLIT,
     ) -> Dict[str, Dict]:
         """
-        Fit all recommenders.
+        Fit all recommenders using random train-test split.
 
         Args:
             transactions: List of transaction items
@@ -333,6 +496,64 @@ class BundleRecommendationEngine:
         for name, recommender in self.recommenders.items():
             logger.info(f"Training {name}...")
             metrics[name] = recommender.fit(transactions, bundles, validation_split)
+
+        return metrics
+
+    def fit_all_with_kfold(
+        self,
+        transactions: List[List[str]],
+        bundles: List[Tuple[str, ...]],
+        n_splits: int = 10,
+    ) -> Dict[str, Dict]:
+        """
+        Fit all recommenders using k-fold cross-validation.
+
+        Args:
+            transactions: List of transaction items
+            bundles: List of product bundles
+            n_splits: Number of folds (default: 10)
+
+        Returns:
+            dict: Aggregated metrics for each recommender across all folds
+        """
+        self.transactions = transactions
+        self.bundles = bundles
+
+        splitter = KFoldSplit(n_splits=n_splits)
+        metrics = {}
+
+        for name, recommender in self.recommenders.items():
+            logger.info(f"Training {name} with {n_splits}-fold cross-validation...")
+            metrics[name] = recommender.fit_with_splitter(transactions, bundles, splitter)
+
+        return metrics
+
+    def fit_all_with_random_split(
+        self,
+        transactions: List[List[str]],
+        bundles: List[Tuple[str, ...]],
+        test_size: float = 0.2,
+    ) -> Dict[str, Dict]:
+        """
+        Fit all recommenders using single random train-test split.
+
+        Args:
+            transactions: List of transaction items
+            bundles: List of product bundles
+            test_size: Fraction of data to use for testing (default: 0.2)
+
+        Returns:
+            dict: Metrics for each recommender
+        """
+        self.transactions = transactions
+        self.bundles = bundles
+
+        splitter = RandomSplit(test_size=test_size)
+        metrics = {}
+
+        for name, recommender in self.recommenders.items():
+            logger.info(f"Training {name} with random split (test_size={test_size})...")
+            metrics[name] = recommender.fit_with_splitter(transactions, bundles, splitter)
 
         return metrics
 
