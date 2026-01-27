@@ -6,7 +6,7 @@ import logging
 import argparse
 from pathlib import Path
 
-from src.config import validate_config, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from src.config import validate_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C
 from src.data_pipeline import DataPipeline
 from src.recommendation_engine import (
     BundleRecommendationEngine,
@@ -97,10 +97,10 @@ def train_recommenders(pipeline: DataPipeline):
     nb_recommender = NaiveBayesBundleRecommender(model_type="multinomial")
     engine.add_recommender("naive_bayes", nb_recommender)
 
-    # Add SVM recommender with different kernels
-    logger.info("Adding SVM recommender...")
-    svm_recommender = SVMBundleRecommender(kernel="rbf", C=1.0)
-    engine.add_recommender("svm_rbf", svm_recommender)
+    # Add SVM recommender with configured kernel
+    logger.info(f"Adding SVM recommender with kernel={SVM_KERNEL}...")
+    svm_recommender = SVMBundleRecommender(kernel=SVM_KERNEL, C=SVM_C)
+    engine.add_recommender("svm", svm_recommender)
 
     # Train all recommenders
     logger.info("Fitting models...")

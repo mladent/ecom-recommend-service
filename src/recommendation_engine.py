@@ -20,7 +20,7 @@ from sklearn.metrics import (
     f1_score,
 )
 
-from src.config import RANDOM_STATE, TRAIN_TEST_SPLIT, N_JOBS
+from src.config import RANDOM_STATE, TRAIN_TEST_SPLIT, N_JOBS, SVM_KERNEL, SVM_C
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +178,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 class SVMBundleRecommender(BaseRecommender):
     """Bundle recommender using Support Vector Machine algorithm."""
 
-    def __init__(self, kernel: str = "rbf", C: float = 1.0):
+    def __init__(self, kernel: str = "linear", C: float = 1.0):
         """
         Initialize SVM recommender.
 

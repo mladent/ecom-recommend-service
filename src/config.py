@@ -1,6 +1,7 @@
 """Configuration management for the recommendation service."""
 
 import os
+import yaml
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -9,6 +10,17 @@ load_dotenv()
 
 # Project root directory
 PROJECT_ROOT = Path(__file__).parent.parent
+
+# Load settings from YAML
+def _load_yaml_config(config_path="config/settings.yaml"):
+    """Load configuration from YAML file."""
+    config_file = PROJECT_ROOT / config_path
+    if config_file.exists():
+        with open(config_file, 'r') as f:
+            return yaml.safe_load(f)
+    return {}
+
+YAML_CONFIG = _load_yaml_config()
 
 # Data Configuration
 DATA_PATH = os.getenv("DATA_PATH", str(PROJECT_ROOT / "data"))
@@ -29,6 +41,10 @@ MAX_BUNDLE_SIZE = int(os.getenv("MAX_BUNDLE_SIZE", 5))
 TRAIN_TEST_SPLIT = float(os.getenv("TRAIN_TEST_SPLIT", 0.8))
 RANDOM_STATE = int(os.getenv("RANDOM_STATE", 42))
 N_JOBS = int(os.getenv("N_JOBS", -1))
+
+# SVM Configuration
+SVM_KERNEL = os.getenv("SVM_KERNEL", YAML_CONFIG.get("algorithms", {}).get("svm", {}).get("kernel", "linear"))
+SVM_C = float(os.getenv("SVM_C", YAML_CONFIG.get("algorithms", {}).get("svm", {}).get("C", 1.0)))
 
 # Kaggle Configuration
 KAGGLE_USERNAME = os.getenv("KAGGLE_USERNAME")
