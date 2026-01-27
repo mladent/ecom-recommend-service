@@ -6,6 +6,7 @@ A machine learning-based recommendation engine that suggests product bundles to 
 
 - **Data Pipeline**: Automated Pandas-based data loading, cleaning, and preprocessing
 - **Bundle Recommendation**: Naive Bayes and SVM-based algorithms for product bundle recommendations
+- **Flexible Model Training**: Support for single random split and k-fold cross-validation
 - **Scalable Architecture**: Modular design prepared for future LLM API integrations
 - **Kaggle Dataset Integration**: Direct download and integration of e-commerce data
 
@@ -16,6 +17,7 @@ ecom-recommend-service/
 ├── src/
 │   ├── __init__.py
 │   ├── data_pipeline.py          # Data loading and preprocessing
+│   ├── data_splitter.py          # Train/test splitting strategies
 │   ├── recommendation_engine.py   # Bundle recommendation algorithms
 │   ├── config.py                  # Configuration management
 │   └── utils.py                   # Utility functions
@@ -337,6 +339,21 @@ pytest tests/ -v
 pytest tests/test_recommendation_engine.py -v
 ```
 
+### Model Training & Evaluation
+
+The recommendation engine supports two data splitting strategies for training and evaluation:
+
+**Single Random Split** - Quick training with single 80/20 train-test split:
+```bash
+python -c "from src.recommendation_engine import BundleRecommendationEngine; 
+engine = BundleRecommendationEngine()
+# ... see examples_kfold_validation.py for full usage
+```
+
+**K-Fold Cross-Validation** - Robust evaluation using 10-fold cross-validation for more reliable metrics and variance estimation. See [src/data_splitter.py](src/data_splitter.py) for implementation of `RandomSplit` and `KFoldSplit` classes.
+
+Both strategies are configured via the `fit_all_with_random_split()` and `fit_all_with_kfold()` methods in `BundleRecommendationEngine`. See [examples_kfold_validation.py](examples_kfold_validation.py) for complete examples.
+
 ## Configuration
 
 ### Environment Variables (.env)
@@ -416,7 +433,8 @@ ecom-recommend-service/
 - Explore the example scripts to understand the API
 - Review the test suite to see usage patterns
 - Check configuration files to customize behavior
-- Review ARCHITECTURE.md for system design details
+- Review [ARCHITECTURE.md](ARCHITECTURE.md) for system design details
+- See [DATA_SPLITTING_REFERENCE.md](DATA_SPLITTING_REFERENCE.md) for model training and evaluation strategies
 
 ## Support
 
