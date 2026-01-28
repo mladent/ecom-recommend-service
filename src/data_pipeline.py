@@ -110,6 +110,36 @@ class DataPipeline:
         logger.info(f"Dataset Statistics: {stats}")
         return stats
 
+    def convert_csv_to_tsv(self, input_filepath: str = RAW_DATA_PATH, output_filepath: Optional[str] = None) -> bool:
+        """
+        Convert CSV file to TSV format with UTF-8 encoding.
+
+        Args:
+            input_filepath: Path to the input CSV file
+            output_filepath: Path to save the TSV file. If None, replaces .csv with .tsv
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if output_filepath is None:
+                output_filepath = input_filepath.replace(".csv", ".tsv")
+
+            # Load CSV with original encoding
+            logger.info(f"Loading CSV from: {input_filepath}")
+            df = pd.read_csv(input_filepath, encoding="ISO-8859-1")
+
+            # Save as TSV with UTF-8 encoding
+            os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
+            df.to_csv(output_filepath, sep="\t", encoding="utf-8", index=False)
+            logger.info(f"Successfully converted and saved TSV to: {output_filepath}")
+            logger.info(f"TSV file contains {len(df)} records with {len(df.columns)} columns")
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to convert CSV to TSV: {e}")
+            return False
+
     def preprocess(self) -> pd.DataFrame:
         """
         Clean and preprocess the raw data.
