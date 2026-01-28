@@ -140,6 +140,99 @@ class DataPipeline:
             logger.error(f"Failed to convert CSV to TSV: {e}")
             return False
 
+    def _handle_cancellations(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Extract and process cancellation flags from InvoiceNo."""
+        df["IsCancellation"] = df["InvoiceNo"].astype(str).str.startswith("C")
+        
+        # Save cancellations to separate file
+        cancellations = df[df["IsCancellation"]]
+        if len(cancellations) > 0:
+            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
+            cancellations_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "Cancellations.tsv")
+            cancellations.to_csv(cancellations_path, sep="\t", encoding="utf-8", index=False)
+            logger.info(f"Saved {len(cancellations)} cancellations to: {cancellations_path}")
+        
+        # Remove cancellations from main dataframe
+        df = df[~df["IsCancellation"]]
+        
+        df.loc[df["IsCancellation"], "InvoiceNo"] = df.loc[df["IsCancellation"], "InvoiceNo"].astype(str).str[1:]
+        df["InvoiceNo"] = pd.to_numeric(df["InvoiceNo"], errors="coerce")
+        logger.info(f"Removed {len(cancellations)} cancellation entries")
+        return df
+
+    def _remove_missing_customers(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove and save rows with missing CustomerID."""
+        initial_rows = len(df)
+        missing_customer_id = df[df["CustomerID"].isna()]
+        
+        if len(missing_customer_id) > 0:
+            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
+            no_customer_id_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "no_CustomerID.tsv")
+            missing_customer_id.to_csv(no_customer_id_path, sep="\t", encoding="utf-8", index=False)
+            logger.info(f"Saved {len(missing_customer_id)} records with missing CustomerID to: {no_customer_id_path}")
+
+        df = df.dropna(subset=["CustomerID"])
+        df["CustomerID"] = pd.to_numeric(df["CustomerID"], errors="coerce")
+        logger.info(f"Removed {initial_rows - len(df)} rows with missing CustomerID")
+        return df
+
+    def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove invalid and duplicate rows."""
+        # Remove missing descriptions
+        initial_rows = len(df)
+        df = df.dropna(subset=["Description"])
+        logger.info(f"Removed {initial_rows - len(df)} rows with missing Description")
+
+        # Remove non-positive quantities and prices; not cancellations
+        initial_rows = len(df)
+        df = df[df["Quantity"] > 0]
+        df = df[df["UnitPrice"] > 0]
+        logger.info(f"Removed {initial_rows - len(df)} rows with zero/negative quantities and prices (not cancellations)")
+
+        # Remove duplicates and save them to a separate file
+        initial_rows = len(df)
+        duplicates = df[df.duplicated(subset=["InvoiceNo", "StockCode"], keep=False)]
+        
+        if len(duplicates) > 0:
+            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
+            duplicates_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "Duplicate_transactions.tsv")
+            duplicates.to_csv(duplicates_path, sep="\t", encoding="utf-8", index=False)
+            logger.info(f"Saved {len(duplicates)} duplicate transactions to: {duplicates_path}")
+        
+        df = df.drop_duplicates(subset=["InvoiceNo", "StockCode"], keep="first")
+        logger.info(f"Removed {initial_rows - len(df)} duplicate transactions")
+
+        return df
+
+    def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create derived features and standardize data for machine learning pipeline.
+        
+        This method performs feature engineering on transaction data by:
+        - Converting InvoiceDate to datetime format for temporal analysis
+        - Extracting season information (1-4) from invoice month for seasonal patterns
+        - Extracting day of week information (1=Monday, 7=Sunday) from InvoiceDate for daily patterns
+        - Calculating transaction value by multiplying quantity and unit price
+        - Normalizing product descriptions to lowercase and removing whitespace
+        
+        Args:
+            df (pd.DataFrame): Input dataframe containing raw transaction data with columns:
+                - InvoiceDate: Date of transaction (string or datetime)
+                - Quantity: Number of items purchased (numeric)
+                - UnitPrice: Price per item (numeric)
+                - Description: Product description (string)
+        
+        Returns:
+            pd.DataFrame: Enhanced dataframe with engineered features ready for model training.
+        """
+        """Create derived features and standardize data."""
+        df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
+        df["InvoiceSeason"] = df["InvoiceDate"].dt.month % 12 // 3 + 1 
+        df["InvoiceDayOfWeek"] = df["InvoiceDate"].dt.dayofweek + 1
+        df["TransactionValue"] = df["Quantity"] * df["UnitPrice"]
+        df["Description"] = df["Description"].str.strip().str.lower()
+        return df
+
     def preprocess(self) -> pd.DataFrame:
         """
         Clean and preprocess the raw data.
@@ -153,37 +246,10 @@ class DataPipeline:
         logger.info("Starting data preprocessing...")
         df = self.raw_data.copy()
 
-        # Remove rows with missing CustomerID
-        initial_rows = len(df)
-        df = df.dropna(subset=["CustomerID"])
-        logger.info(f"Removed {initial_rows - len(df)} rows with missing CustomerID")
-
-        # Remove rows with missing Description
-        initial_rows = len(df)
-        df = df.dropna(subset=["Description"])
-        logger.info(f"Removed {initial_rows - len(df)} rows with missing Description")
-
-        # Remove cancellations (negative quantities)
-        df = df[df["Quantity"] > 0]
-        logger.info("Removed cancellations (negative quantities)")
-
-        # Remove rows with zero or negative prices
-        df = df[df["UnitPrice"] > 0]
-        logger.info("Removed rows with zero or negative prices")
-
-        # Convert InvoiceDate to datetime
-        df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
-
-        # Create transaction value
-        df["TransactionValue"] = df["Quantity"] * df["UnitPrice"]
-
-        # Standardize product descriptions (lowercase, strip)
-        df["Description"] = df["Description"].str.strip().str.lower()
-
-        # Remove duplicates
-        initial_rows = len(df)
-        df = df.drop_duplicates(subset=["InvoiceNo", "StockCode"])
-        logger.info(f"Removed {initial_rows - len(df)} duplicate transactions")
+        df = self._handle_cancellations(df)
+        df = self._remove_missing_customers(df)
+        df = self._clean_data(df)
+        df = self._engineer_features(df)
 
         self.processed_data = df
         logger.info(f"Preprocessing complete. Final dataset: {len(df)} records")
@@ -311,7 +377,7 @@ class DataPipeline:
 
     def save_processed_data(self, filepath: str = PROCESSED_DATA_PATH) -> bool:
         """
-        Save processed data to pickle file.
+        Save processed data to pickle file and a copy to TSV.
 
         Args:
             filepath: Path to save the processed data
@@ -332,6 +398,15 @@ class DataPipeline:
                     f,
                 )
             logger.info(f"Processed data saved to: {filepath}")
+
+            # Also save a copy as TSV for easier inspection
+            tsv_filepath = os.path.splitext(filepath)[0] + ".tsv"
+            try:
+                self.processed_data.to_csv(tsv_filepath, sep="\t", index=False)
+                logger.info(f"Processed data also saved to TSV: {tsv_filepath}")
+            except Exception as e:
+                logger.error(f"Failed to save processed data as TSV: {e}")
+
             return True
         except Exception as e:
             logger.error(f"Failed to save processed data: {e}")
