@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple, List, Dict, Optional
 from itertools import combinations
+from collections import Counter
 
 from src.config import (
     RAW_DATA_PATH,
@@ -372,9 +373,8 @@ class DataPipeline:
         item_counts = {}
         total_transactions = len(self.transactions)
 
-        for items in self.transactions["Items"]:
-            for item in items:
-                item_counts[item] = item_counts.get(item, 0) + 1
+        all_items = [item for items in self.transactions["Items"] for item in items]
+        item_counts = dict(Counter(all_items))
 
         # Filter frequent items
         frequent_items = {
