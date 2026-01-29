@@ -83,31 +83,84 @@ class DataPipeline:
         logger.info(f"Loaded {len(self.raw_data)} records, {len(self.raw_data.columns)} columns")
         return self.raw_data
 
-    def explore_data(self) -> Dict:
+    def explore_data(self, data_type: str = "auto") -> Dict:
         """
-        Explore and describe the dataset.
+        Explore and describe the dataset (raw or preprocessed).
+
+        Args:
+            data_type: Type of data to analyze. Options:
+                - "auto": Use processed_data if available, otherwise raw_data
+                - "raw": Force analysis of raw_data
+                - "processed": Force analysis of processed_data
 
         Returns:
             dict: Statistics about the dataset
-        """
-        if self.raw_data is None:
-            raise ValueError("Raw data not loaded. Call load_raw_data first.")
 
+        Raises:
+            ValueError: If requested data type is not available
+        """
+        # Determine which dataset to analyze
+        if data_type == "auto":
+            df = self.processed_data if self.processed_data is not None else self.raw_data
+            stage = "processed" if self.processed_data is not None else "raw"
+        elif data_type == "raw":
+            df = self.raw_data
+            stage = "raw"
+        elif data_type == "processed":
+            df = self.processed_data
+            stage = "processed"
+        else:
+            raise ValueError(f"Invalid data_type: {data_type}. Use 'auto', 'raw', or 'processed'")
+
+        if df is None:
+            raise ValueError(f"{data_type} data not available. Load or preprocess data first.")
+
+        # Calculate statistics
         stats = {
-            "shape": self.raw_data.shape,
-            "columns": self.raw_data.columns.tolist(),
-            "dtypes": self.raw_data.dtypes.to_dict(),
-            "missing_values": self.raw_data.isnull().sum().to_dict(),
-            "duplicates": self.raw_data.duplicated().sum(),
-            "date_range": (
-                str(pd.to_datetime(self.raw_data["InvoiceDate"]).min()),
-                str(pd.to_datetime(self.raw_data["InvoiceDate"]).max()),
-            ),
-            "unique_customers": self.raw_data["CustomerID"].nunique(),
-            "unique_products": self.raw_data["Description"].nunique(),
+            "stage": stage,
+            "shape": df.shape,
+            "columns": df.columns.tolist(),
+            "dtypes": df.dtypes.to_dict(),
+            "missing_values": df.isnull().sum().to_dict(),
+            "duplicates": df.duplicated().sum(),
         }
 
-        logger.info(f"Dataset Statistics: {stats}")
+        # Add date range if InvoiceDate column exists
+        if "InvoiceDate" in df.columns:
+            try:
+                date_col = pd.to_datetime(df["InvoiceDate"]) if df["InvoiceDate"].dtype != "datetime64[ns]" else df["InvoiceDate"]
+                stats["date_range"] = (
+                    str(date_col.min()),
+                    str(date_col.max()),
+                )
+            except Exception as e:
+                logger.warning(f"Could not parse InvoiceDate for date range: {e}")
+                stats["date_range"] = None
+
+        # Add customer and product statistics
+        if "CustomerID" in df.columns:
+            stats["unique_customers"] = df["CustomerID"].nunique()
+        if "Description" in df.columns:
+            stats["unique_products"] = df["Description"].nunique()
+
+        # Add additional metrics for processed data
+        if stage == "processed":
+            if "TransactionValue" in df.columns:
+                stats["transaction_value_stats"] = {
+                    "min": float(df["TransactionValue"].min()),
+                    "max": float(df["TransactionValue"].max()),
+                    "mean": float(df["TransactionValue"].mean()),
+                    "median": float(df["TransactionValue"].median()),
+                }
+            if "Quantity" in df.columns:
+                stats["quantity_stats"] = {
+                    "min": int(df["Quantity"].min()),
+                    "max": int(df["Quantity"].max()),
+                    "mean": float(df["Quantity"].mean()),
+                    "median": float(df["Quantity"].median()),
+                }
+
+        logger.info(f"Dataset Statistics ({stage} data): {stats}")
         return stats
 
     def convert_csv_to_tsv(self, input_filepath: str = RAW_DATA_PATH, output_filepath: Optional[str] = None) -> bool:
