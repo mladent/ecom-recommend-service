@@ -40,10 +40,62 @@ logging:
   level: INFO
   file: recommendation_service.log
   
-# API Configuration (for future LLM integration)
-# api:
-#   enabled: false
-#   provider: openai
-#   model: gpt-3.5-turbo
-#   temperature: 0.7
-#   max_tokens: 500
+# LLM Normalization (cache-first)
+normalization:
+  enabled: false
+  cache_first: true
+  cache_path: data/normalization_cache.json
+  alias_map_path: data/description_aliases.json
+  min_length: 3
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.0
+    max_tokens: 64
+    timeout_seconds: 20
+    # Provider-specific configuration (env-var driven)
+    # openai:
+    #   api_key_env: OPENAI_API_KEY
+    # azure:
+    #   api_key_env: AZURE_OPENAI_API_KEY
+    #   endpoint_env: AZURE_OPENAI_ENDPOINT
+    #   deployment_env: AZURE_OPENAI_DEPLOYMENT
+    #   api_version_env: AZURE_OPENAI_API_VERSION
+    # gemini:
+    #   api_key_env: GEMINI_API_KEY
+    # anthropic:
+    #   api_key_env: ANTHROPIC_API_KEY
+    # perplexity:
+    #   api_key_env: PERPLEXITY_API_KEY
+    #   base_url_env: PERPLEXITY_BASE_URL
+
+# LLM Category Enrichment (cache-first)
+category_enrichment:
+  enabled: false
+  cache_first: true
+  cache_path: data/category_enrichment_cache.json
+  fields:
+    - category
+    - material
+    - size
+    - theme
+
+# LLM Outlier Detection (batch + IQR)
+outlier_detection:
+  enabled: false
+  cache_first: true
+  cache_path: data/anomaly_cache.json
+  output_path: data/suspicious_transactions.tsv
+  batch_size: 50
+  iqr_multiplier: 1.5
+  fields:
+    - Quantity
+    - UnitPrice
+    - TransactionValue
+# LLM Context Extraction (cache-first)
+context_extraction:
+  enabled: false
+  cache_first: true
+  cache_path: data/context_extraction_cache.json
+  max_contexts: 3
+  min_confidence: 0.6
