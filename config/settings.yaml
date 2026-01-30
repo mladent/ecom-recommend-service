@@ -99,3 +99,12 @@ context_extraction:
   cache_path: data/context_extraction_cache.json
   max_contexts: 3
   min_confidence: 0.6
+
+# LLM Out-of-Stock Alternatives (cache-first)
+out_of_stock_alternatives:
+  enabled: false
+  cache_first: true
+  cache_path: data/out_of_stock_alternatives_cache.json
+  inventory_path: data/inventory.csv
+  max_alternatives: 1
+  min_score: 0.3
