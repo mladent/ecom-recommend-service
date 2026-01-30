@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LLM Select Alternatives Output",
+  "type": "object",
+  "required": ["alternatives"],
+  "properties": {
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item", "score"],
+        "properties": {
+          "item": {"type": "string"},
+          "score": {"type": "number", "minimum": 0, "maximum": 1},
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

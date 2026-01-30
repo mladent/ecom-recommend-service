@@ -6,12 +6,14 @@ import os
 import re
 import hashlib
 from typing import List, Dict, Any, Optional, Tuple
+from jsonschema import ValidationError, validate
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
 logger = logging.getLogger(__name__)
 
 _PROMPT_CACHE: Dict[str, str] = {}
+_SCHEMA_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _prompt_base_dir() -> str:
@@ -35,6 +37,34 @@ def _load_prompt_template(filename: str) -> str:
 def _render_prompt(filename: str, **kwargs: Any) -> str:
     template = _load_prompt_template(filename)
     return template.format(**kwargs)
+
+
+def _schema_base_dir() -> str:
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "config", "schemas"))
+
+
+def _load_json_schema(filename: str) -> Dict[str, Any]:
+    if filename in _SCHEMA_CACHE:
+        return _SCHEMA_CACHE[filename]
+    base_dir = _schema_base_dir()
+    path = os.path.normpath(os.path.join(base_dir, filename))
+    if not path.startswith(base_dir):
+        raise RuntimeError(f"Invalid schema path: {filename}")
+    if not os.path.exists(path):
+        raise RuntimeError(f"Schema file missing: {filename}")
+    with open(path, "r", encoding="utf-8") as handle:
+        _SCHEMA_CACHE[filename] = json.load(handle)
+    return _SCHEMA_CACHE[filename]
+
+
+def _validate_json_schema(payload: Any, schema_filename: str, context: str) -> None:
+    schema = _load_json_schema(schema_filename)
+    try:
+        validate(instance=payload, schema=schema)
+    except ValidationError as exc:
+        # Production note: consider retrying with stricter fallback/alternative prompts
+        # to recover invalid JSON outputs from LLM providers.
+        raise RuntimeError(f"Invalid LLM JSON output for {context}: {exc.message}") from exc
 
 
 class LLMQuotaExceededError(RuntimeError):
@@ -449,6 +479,7 @@ def enrich_categories_with_llm(
             response_text = response_text.split("```")[1].split("```")[0].strip()
         
         result = json.loads(response_text)
+        _validate_json_schema(result, "llm_enrich_categories.json", "category enrichment")
         
         # Ensure all requested fields are present
         enriched = {}
@@ -603,6 +634,7 @@ def batch_score_anomalies_with_llm(
             response_text = response_text.split("```")[1].split("```")[0].strip()
 
         parsed = json.loads(response_text)
+        _validate_json_schema(parsed, "llm_batch_score_anomalies.json", "anomaly scoring")
         result: Dict[str, Dict[str, str]] = {}
         for item in parsed:
             key = str(item.get("key", ""))
@@ -762,6 +794,7 @@ def extract_contexts_with_llm(
             response_text = response_text.split("```")[1].split("```")[0].strip()
         
         result = json.loads(response_text)
+        _validate_json_schema(result, "llm_extract_contexts.json", "context extraction")
         
         # Ensure result has contexts array
         contexts = result.get("contexts", [])
@@ -953,7 +986,10 @@ def select_alternatives_with_llm(
             response_text = response_text.split("```")[1].split("```")[0].strip()
 
         result = json.loads(response_text)
-        alternatives = result.get("alternatives", []) if isinstance(result, dict) else result
+        if isinstance(result, list):
+            result = {"alternatives": result}
+        _validate_json_schema(result, "llm_select_alternatives.json", "alternative selection")
+        alternatives = result.get("alternatives", [])
         if not isinstance(alternatives, list):
             return []
         return alternatives[:max_alternatives]
