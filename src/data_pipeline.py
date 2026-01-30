@@ -328,7 +328,7 @@ class DataPipeline:
         )
         baskets.columns = ["InvoiceNo", "Items"]
 
-        # Add transaction metadata
+        # Add transaction metadata using vectorized aggregation
         invoice_data = self.processed_data.groupby("InvoiceNo").agg(
             {
                 "CustomerID": "first",
@@ -340,8 +340,10 @@ class DataPipeline:
 
         baskets = baskets.merge(invoice_data, left_on="InvoiceNo", right_index=True)
 
-        # Filter baskets with at least 2 items (needed for bundles)
-        baskets = baskets[baskets["Items"].apply(len) >= 2]
+        # Filter baskets with at least 2 items using vectorized operation
+        # Convert list lengths to series once (O(n) operation)
+        basket_sizes = baskets["Items"].str.len()
+        baskets = baskets[basket_sizes >= 2]
 
         logger.info(f"Created {len(baskets)} transaction baskets with multiple items")
         self.transactions = baskets
@@ -353,6 +355,7 @@ class DataPipeline:
     ) -> List[Tuple]:
         """
         Generate product bundles using frequent itemset analysis (Apriori-like approach).
+        Optimized with vectorized matrix operations for support calculation.
 
         Args:
             min_support: Minimum support threshold (fraction of transactions)
@@ -369,12 +372,10 @@ class DataPipeline:
             f"Generating bundles (min_support={min_support}, min_confidence={min_confidence}, max_size={max_size})..."
         )
 
-        # Calculate item frequencies
-        item_counts = {}
-        total_transactions = len(self.transactions)
-
+        # Get all items and create item-to-index mapping
         all_items = [item for items in self.transactions["Items"] for item in items]
         item_counts = dict(Counter(all_items))
+        total_transactions = len(self.transactions)
 
         # Filter frequent items
         frequent_items = {
@@ -385,8 +386,19 @@ class DataPipeline:
 
         logger.info(f"Found {len(frequent_items)} frequent items (support >= {min_support})")
 
-        # Pre-compute transaction item sets for O(1) lookup performance
-        transaction_sets = [set(items) for items in self.transactions["Items"]]
+        # Create item-to-index mapping for matrix operations
+        item_to_idx = {item: idx for idx, item in enumerate(frequent_items.keys())}
+        num_items = len(item_to_idx)
+
+        # Create transaction-item matrix (sparse representation)
+        # Each row is a transaction, each column is an item
+        transaction_matrix = np.zeros((total_transactions, num_items), dtype=np.uint8)
+        
+        for trans_idx, items in enumerate(self.transactions["Items"]):
+            for item in items:
+                if item in item_to_idx:
+                    transaction_matrix[trans_idx, item_to_idx[item]] = 1
+
         support_threshold = min_support * total_transactions
 
         # Generate itemsets of increasing size
@@ -394,24 +406,27 @@ class DataPipeline:
         current_itemsets = [[item] for item in frequent_items.keys()]
 
         for size in range(2, max_size + 1):
-            # Generate candidate itemsets using set for O(1) duplicate checking (instead of O(n) list lookup)
+            # Generate candidate itemsets
             candidates_set = set()
             for i in range(len(current_itemsets)):
                 for j in range(i + 1, len(current_itemsets)):
                     union = sorted(list(set(current_itemsets[i]) | set(current_itemsets[j])))
                     if len(union) == size:
-                        candidates_set.add(tuple(union))  # Use set for fast O(1) lookup
+                        candidates_set.add(tuple(union))
 
             if not candidates_set:
                 break
-            
+
             logger.info(f"Created candidates_set with {len(candidates_set)} candidates of size {size}")
 
-            # Calculate support for candidates using pre-computed transaction sets
+            # Vectorized support calculation using matrix operations
             valid_itemsets = []
             for candidate in candidates_set:
-                candidate_set = set(candidate)
-                support = sum(1 for trans_set in transaction_sets if candidate_set.issubset(trans_set))
+                # Get column indices for items in candidate
+                col_indices = [item_to_idx[item] for item in candidate]
+                # Calculate support: count transactions where ALL items are present
+                support = np.sum(np.all(transaction_matrix[:, col_indices], axis=1))
+                
                 if support >= support_threshold:
                     valid_itemsets.append(tuple(candidate))
                     bundles.append(tuple(candidate))
