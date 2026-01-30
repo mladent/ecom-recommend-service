@@ -36,6 +36,45 @@ class BaseRecommender(ABC):
         self.feature_encoder = None
         self.is_fitted = False
         self.feature_names = None
+        self.known_classes = None  # Store known classes from training
+
+    def _filter_unknown_classes(self, transactions: List[List[str]]) -> Tuple[List[List[str]], int]:
+        """
+        Filter out unknown classes from transactions to prevent sklearn warnings.
+        
+        Args:
+            transactions: List of transaction items (list of lists of strings)
+            
+        Returns:
+            Tuple of (filtered_transactions, num_filtered_items): 
+            - filtered_transactions: Transactions with only known classes
+            - num_filtered_items: Total number of items filtered out
+        """
+        # Initialize known_classes from feature_names if not set (for backwards compatibility with pickled models)
+        known_classes = getattr(self, 'known_classes', None)
+        if known_classes is None:
+            if self.feature_names is not None:
+                known_classes = set(self.feature_names)
+            else:
+                return transactions, 0
+            
+        filtered_transactions = []
+        num_filtered = 0
+        
+        for transaction in transactions:
+            filtered_items = [item for item in transaction if item in known_classes]
+            num_filtered += len(transaction) - len(filtered_items)
+            
+            if filtered_items:  # Keep transaction even if some items are filtered
+                filtered_transactions.append(filtered_items)
+            else:
+                # If all items are unknown, keep empty transaction (important for prediction shape)
+                filtered_transactions.append([])
+        
+        if num_filtered > 0:
+            logger.debug(f"Filtered out {num_filtered} unknown class items from {len(transactions)} transactions")
+        
+        return filtered_transactions, num_filtered
 
     @abstractmethod
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
@@ -98,6 +137,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
         self.feature_names = self.mlb.classes_
+        self.known_classes = set(self.mlb.classes_)  # Store for filtering in predict
 
         # Create binary labels for each bundle
         y = np.zeros(len(transactions), dtype=int)
@@ -157,6 +197,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
         self.feature_names = self.mlb.classes_
+        self.known_classes = set(self.mlb.classes_)  # Store for filtering in predict
 
         # Create binary labels for each bundle
         y = np.zeros(len(transactions), dtype=int)
@@ -251,7 +292,12 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         if not self.is_fitted:
             raise ValueError("Model not fitted. Call fit() first.")
 
-        X = self.mlb.transform(transactions)
+        # Filter unknown classes to prevent sklearn warnings
+        filtered_transactions, num_filtered = self._filter_unknown_classes(transactions)
+        if num_filtered > 0:
+            logger.debug(f"{self.name}: Removed {num_filtered} unknown product(s) before prediction")
+
+        X = self.mlb.transform(filtered_transactions)
         if self.model_type == "gaussian":
             if hasattr(X, "toarray"):
                 X = X.toarray()
@@ -301,6 +347,7 @@ class SVMBundleRecommender(BaseRecommender):
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
         self.feature_names = self.mlb.classes_
+        self.known_classes = set(self.mlb.classes_)  # Store for filtering in predict
 
         # Convert to dense and scale
         X_dense = X.toarray() if hasattr(X, "toarray") else X
@@ -357,6 +404,7 @@ class SVMBundleRecommender(BaseRecommender):
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
         self.feature_names = self.mlb.classes_
+        self.known_classes = set(self.mlb.classes_)  # Store for filtering in predict
 
         # Convert to dense and scale
         X_dense = X.toarray() if hasattr(X, "toarray") else X
@@ -445,7 +493,12 @@ class SVMBundleRecommender(BaseRecommender):
         if not self.is_fitted:
             raise ValueError("Model not fitted. Call fit() first.")
 
-        X = self.mlb.transform(transactions)
+        # Filter unknown classes to prevent sklearn warnings
+        filtered_transactions, num_filtered = self._filter_unknown_classes(transactions)
+        if num_filtered > 0:
+            logger.debug(f"{self.name}: Removed {num_filtered} unknown product(s) before prediction")
+
+        X = self.mlb.transform(filtered_transactions)
         X_dense = X.toarray() if hasattr(X, "toarray") else X
         X_scaled = self.scaler.transform(X_dense)
         return self.model.predict_proba(X_scaled)
