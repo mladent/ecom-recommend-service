@@ -239,9 +239,9 @@ class DataPipeline:
             logger.info(f"Saved {len(cancellations)} cancellations to: {cancellations_path}")
         
         # Remove cancellations from main dataframe
-        df = df[~df["IsCancellation"]]
+        df = df[~df["IsCancellation"]].copy()
         
-        df.loc[df["IsCancellation"], "InvoiceNo"] = df.loc[df["IsCancellation"], "InvoiceNo"].astype(str).str[1:]
+        # Convert InvoiceNo to numeric (no need to process cancellations since they're already removed)
         df["InvoiceNo"] = pd.to_numeric(df["InvoiceNo"], errors="coerce")
         logger.info(f"Removed {len(cancellations)} cancellation entries")
         return df
@@ -501,9 +501,14 @@ class DataPipeline:
 
         # Add enrichment columns to dataframe
         for field in ENRICHMENT_FIELDS:
-            df[field] = df["Description"].map(lambda d: enrichment_map.get(d, {}).get(field, "NaN"))
-            # Convert "NaN" strings to actual NaN
-            df[field] = df[field].replace("NaN", np.nan)
+            # Create a mapping function that returns None instead of "NaN" string
+            def get_field_value(desc, field_name=field):
+                enrichment = enrichment_map.get(desc, {})
+                value = enrichment.get(field_name, "NaN")
+                return None if value == "NaN" else value
+            
+            # Apply mapping and handle None values properly
+            df[field] = df["Description"].apply(get_field_value)
 
         logger.info(f"Category enrichment complete; added columns: {ENRICHMENT_FIELDS}")
         return df
