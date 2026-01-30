@@ -52,16 +52,25 @@ def prepare_data(force_reprocess: bool = False):
         logger.info("Please download data first using: python main.py --download")
         return None
 
+
+    logger.info("Convert csv to tsv, and save...")
+    pipeline.convert_csv_to_tsv()
+
     logger.info("Loading raw data...")
     pipeline.load_raw_data()
 
-    logger.info("Exploring data...")
+    logger.info("Exploring raw data...")
     stats = pipeline.explore_data()
     for key, value in stats.items():
         logger.info(f"  {key}: {value}")
 
     logger.info("Preprocessing data...")
     pipeline.preprocess()
+
+    logger.info("Exploring processed data...")
+    stats = pipeline.explore_data()
+    for key, value in stats.items():
+        logger.info(f"  {key}: {value}")
 
     logger.info("Creating transaction baskets...")
     pipeline.create_transaction_baskets()
