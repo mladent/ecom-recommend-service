@@ -79,3 +79,16 @@ category_enrichment:
     - material
     - size
     - theme
+
+# LLM Outlier Detection (batch + IQR)
+outlier_detection:
+  enabled: false
+  cache_first: true
+  cache_path: data/anomaly_cache.json
+  output_path: data/suspicious_transactions.tsv
+  batch_size: 50
+  iqr_multiplier: 1.5
+  fields:
+    - Quantity
+    - UnitPrice
+    - TransactionValue

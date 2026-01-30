@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Any
 from itertools import combinations
 from collections import Counter
 
@@ -41,11 +41,20 @@ from src.config import (
     ENRICHMENT_CACHE_FIRST,
     ENRICHMENT_CACHE_PATH,
     ENRICHMENT_FIELDS,
+    OUTLIER_ENABLED,
+    OUTLIER_CACHE_FIRST,
+    OUTLIER_CACHE_PATH,
+    OUTLIER_OUTPUT_PATH,
+    OUTLIER_BATCH_SIZE,
+    OUTLIER_IQR_MULTIPLIER,
+    OUTLIER_FIELDS,
 )
 from src.utils import (
     normalize_description_basic,
     normalize_description_with_llm,
     enrich_categories_with_llm,
+    compute_iqr_bounds,
+    batch_score_anomalies_with_llm,
     LLMQuotaExceededError,
     load_alias_map,
     load_json_file,
@@ -543,6 +552,185 @@ class DataPipeline:
             df["Description"] = df["Description"].str.strip().str.lower()
         return df
 
+    def _flag_anomalies(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Flag suspicious transactions using IQR-based outliers and LLM-assisted batch scoring.
+
+        Adds columns:
+            - check_anomaly (bool)
+            - anomaly_type (str)
+            - anomaly_reason (str)
+        """
+        df["check_anomaly"] = False
+        df["anomaly_type"] = None
+        df["anomaly_reason"] = None
+
+        if not OUTLIER_ENABLED:
+            logger.info("Outlier detection disabled; skipping")
+            return df
+
+        numeric_fields = [field for field in OUTLIER_FIELDS if field in df.columns]
+        if not numeric_fields:
+            logger.warning("Outlier detection enabled but no numeric fields available")
+            return df
+
+        outlier_indices = set()
+        index_reasons: Dict[int, List[str]] = {}
+
+        for field in numeric_fields:
+            lower, upper = compute_iqr_bounds(df[field], OUTLIER_IQR_MULTIPLIER)
+            mask = df[field].notna() & ((df[field] < lower) | (df[field] > upper))
+            for idx in df[mask].index:
+                outlier_indices.add(idx)
+                index_reasons.setdefault(idx, []).append(f"IQR outlier in {field}")
+
+        if not outlier_indices:
+            logger.info("No IQR outliers detected")
+            return df
+
+        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        llm_available = True
+
+        if provider == "openai" and not OPENAI_API_KEY:
+            llm_available = False
+        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
+            llm_available = False
+        elif provider == "gemini" and not GEMINI_API_KEY:
+            llm_available = False
+        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
+            llm_available = False
+        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
+            llm_available = False
+
+        if not llm_available:
+            logger.warning("Outlier detection enabled but provider credentials are missing; using heuristic labels")
+
+        cache = load_json_file(OUTLIER_CACHE_PATH) if OUTLIER_CACHE_FIRST else {}
+        cache_updated = False
+
+        def _record_key(row: pd.Series) -> str:
+            return "|".join(
+                [
+                    str(row.get("InvoiceNo", "")),
+                    str(row.get("StockCode", "")),
+                    str(row.get("CustomerID", "")),
+                    str(row.get("InvoiceDate", "")),
+                    str(row.get("Quantity", "")),
+                    str(row.get("UnitPrice", "")),
+                    str(row.get("TransactionValue", "")),
+                ]
+            )
+
+        candidates = df.loc[list(outlier_indices)].copy()
+        candidates["_record_key"] = candidates.apply(_record_key, axis=1)
+        candidates["_outlier_reasons"] = candidates.index.map(lambda i: ", ".join(index_reasons.get(i, [])))
+
+        # Prepare batch records for LLM
+        pending_records: List[Dict[str, Any]] = []
+        pending_keys: List[str] = []
+        results: Dict[str, Dict[str, str]] = {}
+
+        for _, row in candidates.iterrows():
+            key = row["_record_key"]
+            if OUTLIER_CACHE_FIRST and key in cache:
+                results[key] = cache[key]
+                continue
+
+            record = {
+                "key": key,
+                "description": row.get("Description", ""),
+                "quantity": row.get("Quantity", ""),
+                "unit_price": row.get("UnitPrice", ""),
+                "transaction_value": row.get("TransactionValue", ""),
+                "customer_id": row.get("CustomerID", ""),
+                "country": row.get("Country", ""),
+                "invoice_date": str(row.get("InvoiceDate", "")),
+                "outlier_reasons": row.get("_outlier_reasons", ""),
+            }
+            pending_records.append(record)
+            pending_keys.append(key)
+
+        if llm_available and pending_records:
+            for i in range(0, len(pending_records), OUTLIER_BATCH_SIZE):
+                batch = pending_records[i : i + OUTLIER_BATCH_SIZE]
+                try:
+                    batch_results = batch_score_anomalies_with_llm(
+                        records=batch,
+                        provider=provider,
+                        model=LLM_MODEL,
+                        temperature=LLM_TEMPERATURE,
+                        max_tokens=LLM_MAX_TOKENS,
+                        timeout_seconds=LLM_TIMEOUT_SECONDS,
+                        api_key=(
+                            OPENAI_API_KEY
+                            if provider == "openai"
+                            else AZURE_OPENAI_API_KEY
+                            if provider == "azure"
+                            else GEMINI_API_KEY
+                            if provider == "gemini"
+                            else ANTHROPIC_API_KEY
+                            if provider == "anthropic"
+                            else PERPLEXITY_API_KEY
+                        ),
+                        endpoint=AZURE_OPENAI_ENDPOINT,
+                        deployment=AZURE_OPENAI_DEPLOYMENT,
+                        api_version=AZURE_OPENAI_API_VERSION,
+                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                    )
+                except LLMQuotaExceededError as exc:
+                    llm_available = False
+                    logger.warning("LLM quota exceeded; skipping remaining outlier batches")
+                    logger.debug(f"Quota error detail: {exc}")
+                    batch_results = {}
+                    results.update(batch_results)
+                    break
+
+                results.update(batch_results)
+
+        # Heuristic fallback for any missing results
+        for _, row in candidates.iterrows():
+            key = row["_record_key"]
+            if key in results:
+                continue
+            reasons = row.get("_outlier_reasons", "")
+            if "Quantity" in reasons:
+                anomaly_type = "bot-like"
+            elif "UnitPrice" in reasons or "TransactionValue" in reasons:
+                anomaly_type = "mispriced"
+            else:
+                anomaly_type = "invalid"
+            results[key] = {
+                "anomaly_type": anomaly_type,
+                "anomaly_reason": reasons,
+            }
+
+        # Apply results to dataframe
+        for idx, row in candidates.iterrows():
+            key = row["_record_key"]
+            result = results.get(key, {})
+            df.at[idx, "check_anomaly"] = True
+            df.at[idx, "anomaly_type"] = result.get("anomaly_type", "none")
+            df.at[idx, "anomaly_reason"] = result.get("anomaly_reason", row.get("_outlier_reasons", ""))
+
+            if OUTLIER_CACHE_FIRST:
+                cache[key] = {
+                    "anomaly_type": df.at[idx, "anomaly_type"],
+                    "anomaly_reason": df.at[idx, "anomaly_reason"],
+                }
+                cache_updated = True
+
+        if OUTLIER_CACHE_FIRST and cache_updated:
+            save_json_file(OUTLIER_CACHE_PATH, cache)
+
+        anomalies = df[df["check_anomaly"]]
+        if len(anomalies) > 0:
+            os.makedirs(os.path.dirname(OUTLIER_OUTPUT_PATH), exist_ok=True)
+            anomalies.to_csv(OUTLIER_OUTPUT_PATH, sep="\t", encoding="utf-8", index=False)
+            logger.info(f"Saved {len(anomalies)} suspicious transactions to: {OUTLIER_OUTPUT_PATH}")
+
+        logger.info(f"Flagged {len(anomalies)} suspicious transactions")
+        return df
+
     def preprocess(self) -> pd.DataFrame:
         """
         Clean and preprocess the raw data.
@@ -562,6 +750,7 @@ class DataPipeline:
         df = self._normalize_descriptions(df)
         df = self._enrich_categories(df)
         df = self._engineer_features(df)
+        df = self._flag_anomalies(df)
 
         self.processed_data = df
         logger.info(f"Preprocessing complete. Final dataset: {len(df)} records")

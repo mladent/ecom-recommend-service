@@ -13,6 +13,7 @@ data/*.zip
 data/categories_*.txt
 data/data_report.md
 data/normalization_cache.json
+data/anomaly_cache.json
 !data/.gitkeep
 
 # Python

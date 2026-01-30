@@ -104,6 +104,22 @@ ENRICHMENT_CACHE_PATH = _resolve_path(
 )
 ENRICHMENT_FIELDS = ENRICHMENT_CONFIG.get("fields", ["category", "material", "size", "theme"])
 
+# LLM Outlier Detection Configuration
+OUTLIER_CONFIG = YAML_CONFIG.get("outlier_detection", {})
+OUTLIER_ENABLED = _env_bool("LLM_OUTLIER_ENABLED", OUTLIER_CONFIG.get("enabled", False))
+OUTLIER_CACHE_FIRST = _env_bool("LLM_OUTLIER_CACHE_FIRST", OUTLIER_CONFIG.get("cache_first", True))
+OUTLIER_CACHE_PATH = _resolve_path(
+    os.getenv("LLM_OUTLIER_CACHE_PATH", OUTLIER_CONFIG.get("cache_path", "data/anomaly_cache.json"))
+)
+OUTLIER_OUTPUT_PATH = _resolve_path(
+    os.getenv("LLM_OUTLIER_OUTPUT_PATH", OUTLIER_CONFIG.get("output_path", "data/suspicious_transactions.tsv"))
+)
+OUTLIER_BATCH_SIZE = int(os.getenv("LLM_OUTLIER_BATCH_SIZE", OUTLIER_CONFIG.get("batch_size", 50)))
+OUTLIER_IQR_MULTIPLIER = float(
+    os.getenv("LLM_OUTLIER_IQR_MULTIPLIER", OUTLIER_CONFIG.get("iqr_multiplier", 1.5))
+)
+OUTLIER_FIELDS = OUTLIER_CONFIG.get("fields", ["Quantity", "UnitPrice", "TransactionValue"])
+
 
 def validate_config():
     """Validate critical configuration values."""
