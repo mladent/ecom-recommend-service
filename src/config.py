@@ -130,6 +130,19 @@ CONTEXT_CACHE_PATH = _resolve_path(
 CONTEXT_MAX_CONTEXTS = int(os.getenv("LLM_CONTEXT_MAX_CONTEXTS", CONTEXT_CONFIG.get("max_contexts", 3)))
 CONTEXT_MIN_CONFIDENCE = float(os.getenv("LLM_CONTEXT_MIN_CONFIDENCE", CONTEXT_CONFIG.get("min_confidence", 0.6)))
 
+# LLM Out-of-Stock Alternatives Configuration
+OOS_CONFIG = YAML_CONFIG.get("out_of_stock_alternatives", {})
+OOS_ENABLED = _env_bool("LLM_OOS_ENABLED", OOS_CONFIG.get("enabled", False))
+OOS_CACHE_FIRST = _env_bool("LLM_OOS_CACHE_FIRST", OOS_CONFIG.get("cache_first", True))
+OOS_CACHE_PATH = _resolve_path(
+    os.getenv("LLM_OOS_CACHE_PATH", OOS_CONFIG.get("cache_path", "data/out_of_stock_alternatives_cache.json"))
+)
+OOS_INVENTORY_PATH = _resolve_path(
+    os.getenv("LLM_OOS_INVENTORY_PATH", OOS_CONFIG.get("inventory_path", "data/inventory.csv"))
+)
+OOS_MAX_ALTERNATIVES = int(os.getenv("LLM_OOS_MAX_ALTERNATIVES", OOS_CONFIG.get("max_alternatives", 1)))
+OOS_MIN_SCORE = float(os.getenv("LLM_OOS_MIN_SCORE", OOS_CONFIG.get("min_score", 0.3)))
+
 
 def validate_config():
     """Validate critical configuration values."""
