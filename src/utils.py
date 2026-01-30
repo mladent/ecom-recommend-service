@@ -11,6 +11,31 @@ from urllib.error import URLError, HTTPError
 
 logger = logging.getLogger(__name__)
 
+_PROMPT_CACHE: Dict[str, str] = {}
+
+
+def _prompt_base_dir() -> str:
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "config", "prompts"))
+
+
+def _load_prompt_template(filename: str) -> str:
+    if filename in _PROMPT_CACHE:
+        return _PROMPT_CACHE[filename]
+    base_dir = _prompt_base_dir()
+    path = os.path.normpath(os.path.join(base_dir, filename))
+    if not path.startswith(base_dir):
+        raise RuntimeError(f"Invalid prompt path: {filename}")
+    if not os.path.exists(path):
+        raise RuntimeError(f"Prompt file missing: {filename}")
+    with open(path, "r", encoding="utf-8") as handle:
+        _PROMPT_CACHE[filename] = handle.read().strip()
+    return _PROMPT_CACHE[filename]
+
+
+def _render_prompt(filename: str, **kwargs: Any) -> str:
+    template = _load_prompt_template(filename)
+    return template.format(**kwargs)
+
 
 class LLMQuotaExceededError(RuntimeError):
     """Raised when LLM provider reports insufficient quota."""
@@ -183,12 +208,8 @@ def normalize_description_with_llm(
     if not text:
         return ""
 
-    prompt = (
-        "Normalize the product description for catalog matching. "
-        "Fix casing, spelling, and standardize units. "
-        "Return only the canonical product name without quotes or extra text.\n"
-        f"Description: {text}"
-    )
+    prompt = _render_prompt("normalize_description_user.md", text=text)
+    system_prompt = _load_prompt_template("normalize_description_system.md")
 
     try:
         provider = (provider or "").lower()
@@ -202,7 +223,7 @@ def normalize_description_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You normalize product descriptions."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -219,7 +240,7 @@ def normalize_description_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You normalize product descriptions."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -270,7 +291,7 @@ def normalize_description_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You normalize product descriptions."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -325,14 +346,8 @@ def enrich_categories_with_llm(
 
     # Build prompt requesting JSON output
     fields_str = ", ".join(fields)
-    prompt = (
-        f"Extract the following attributes from this product description: {fields_str}. "
-        "Return a JSON object with each field as a key. "
-        'Use "NaN" for any attribute that cannot be determined. '
-        "Be concise and specific.\n"
-        f"Description: {text}\n"
-        "JSON:"
-    )
+    prompt = _render_prompt("enrich_categories_user.md", fields=fields_str, text=text)
+    system_prompt = _load_prompt_template("enrich_categories_system.md")
 
     try:
         provider = (provider or "").lower()
@@ -348,7 +363,7 @@ def enrich_categories_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You extract product attributes and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -365,7 +380,7 @@ def enrich_categories_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You extract product attributes and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -416,7 +431,7 @@ def enrich_categories_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You extract product attributes and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -484,15 +499,11 @@ def batch_score_anomalies_with_llm(
     if not records:
         return {}
 
-    prompt = (
-        "You are an anomaly detector for e-commerce transactions. "
-        "Classify each record as one of: bot-like, mispriced, invalid, or none. "
-        "Use the provided statistical outlier indicators and transaction details. "
-        "Return ONLY JSON array of objects with keys: key, anomaly_type, anomaly_reason. "
-        'Use "none" if not suspicious.\n\n'
-        "Records:\n"
-        f"{json.dumps(records, ensure_ascii=False)}"
+    prompt = _render_prompt(
+        "batch_score_anomalies_user.md",
+        records_json=json.dumps(records, ensure_ascii=False),
     )
+    system_prompt = _load_prompt_template("batch_score_anomalies_system.md")
 
     try:
         provider = (provider or "").lower()
@@ -508,7 +519,7 @@ def batch_score_anomalies_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You detect transaction anomalies and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -525,7 +536,7 @@ def batch_score_anomalies_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You detect transaction anomalies and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -576,7 +587,7 @@ def batch_score_anomalies_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You detect transaction anomalies and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -649,14 +660,8 @@ def extract_contexts_with_llm(
         return {"contexts": []}
 
     # Build prompt requesting JSON output
-    prompt = (
-        f"Extract {max_contexts} usage contexts from this product description "
-        "(e.g., party, kitchen, car maintenance). "
-        "Return JSON with contexts array containing {{context, confidence}} objects "
-        "(confidence as float 0.0-1.0). Be specific and varied.\n"
-        f"Description: {text}\n"
-        "JSON:"
-    )
+    prompt = _render_prompt("extract_contexts_user.md", max_contexts=max_contexts, text=text)
+    system_prompt = _load_prompt_template("extract_contexts_system.md")
 
     try:
         provider = (provider or "").lower()
@@ -672,7 +677,7 @@ def extract_contexts_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You extract product usage contexts and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -689,7 +694,7 @@ def extract_contexts_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You extract product usage contexts and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -740,7 +745,7 @@ def extract_contexts_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You extract product usage contexts and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -843,15 +848,12 @@ def select_alternatives_with_llm(
     if not missing_item or not candidates:
         return []
 
-    prompt = (
-        "You are selecting replacement items for out-of-stock products. "
-        "Choose the closest alternatives based on category or description similarity. "
-        "Return JSON with alternatives array of objects {item, score, reason}. "
-        "Score from 0.0 to 1.0. Only include items from the candidate list.\n"
-        f"Missing item: {missing_item}\n"
-        f"Candidates: {json.dumps(candidates[:200])}\n"
-        "JSON:"
+    prompt = _render_prompt(
+        "select_alternatives_user.md",
+        missing_item=missing_item,
+        candidates_json=json.dumps(candidates[:200]),
     )
+    system_prompt = _load_prompt_template("select_alternatives_system.md")
 
     try:
         provider = (provider or "").lower()
@@ -867,7 +869,7 @@ def select_alternatives_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You select closest replacement items and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -884,7 +886,7 @@ def select_alternatives_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You select closest replacement items and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
@@ -935,7 +937,7 @@ def select_alternatives_with_llm(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": [
-                    {"role": "system", "content": "You select closest replacement items and return JSON."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             }
