@@ -120,6 +120,16 @@ OUTLIER_IQR_MULTIPLIER = float(
 )
 OUTLIER_FIELDS = OUTLIER_CONFIG.get("fields", ["Quantity", "UnitPrice", "TransactionValue"])
 
+# LLM Context Extraction Configuration
+CONTEXT_CONFIG = YAML_CONFIG.get("context_extraction", {})
+CONTEXT_ENABLED = _env_bool("LLM_CONTEXT_ENABLED", CONTEXT_CONFIG.get("enabled", False))
+CONTEXT_CACHE_FIRST = _env_bool("LLM_CONTEXT_CACHE_FIRST", CONTEXT_CONFIG.get("cache_first", True))
+CONTEXT_CACHE_PATH = _resolve_path(
+    os.getenv("LLM_CONTEXT_CACHE_PATH", CONTEXT_CONFIG.get("cache_path", "data/context_extraction_cache.json"))
+)
+CONTEXT_MAX_CONTEXTS = int(os.getenv("LLM_CONTEXT_MAX_CONTEXTS", CONTEXT_CONFIG.get("max_contexts", 3)))
+CONTEXT_MIN_CONFIDENCE = float(os.getenv("LLM_CONTEXT_MIN_CONFIDENCE", CONTEXT_CONFIG.get("min_confidence", 0.6)))
+
 
 def validate_config():
     """Validate critical configuration values."""

@@ -48,11 +48,17 @@ from src.config import (
     OUTLIER_BATCH_SIZE,
     OUTLIER_IQR_MULTIPLIER,
     OUTLIER_FIELDS,
+    CONTEXT_ENABLED,
+    CONTEXT_CACHE_FIRST,
+    CONTEXT_CACHE_PATH,
+    CONTEXT_MAX_CONTEXTS,
+    CONTEXT_MIN_CONFIDENCE,
 )
 from src.utils import (
     normalize_description_basic,
     normalize_description_with_llm,
     enrich_categories_with_llm,
+    extract_contexts_with_llm,
     compute_iqr_bounds,
     batch_score_anomalies_with_llm,
     LLMQuotaExceededError,
@@ -731,6 +737,126 @@ class DataPipeline:
         logger.info(f"Flagged {len(anomalies)} suspicious transactions")
         return df
 
+    def _extract_contexts(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Extract usage contexts from product descriptions using cache-first LLM.
+
+        Args:
+            df (pd.DataFrame): Input dataframe with Description column
+
+        Returns:
+            pd.DataFrame: Dataframe with added 'contexts' column (comma-separated context strings)
+        """
+        if "Description" not in df.columns:
+            return df
+
+        if not CONTEXT_ENABLED:
+            logger.info("Context extraction disabled; skipping")
+            return df
+
+        cache = load_json_file(CONTEXT_CACHE_PATH) if CONTEXT_CACHE_FIRST else {}
+        cache_updated = False
+        cache_hits = 0
+        cache_misses = 0
+
+        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        llm_available = True
+
+        if provider == "openai" and not OPENAI_API_KEY:
+            llm_available = False
+        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
+            llm_available = False
+        elif provider == "gemini" and not GEMINI_API_KEY:
+            llm_available = False
+        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
+            llm_available = False
+        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
+            llm_available = False
+
+        if not llm_available:
+            logger.warning(
+                "Context extraction enabled but provider credentials are missing; skipping extraction"
+            )
+            df["contexts"] = ""
+            return df
+
+        unique_descriptions = df["Description"].dropna().astype(str).unique()
+        context_map: Dict[str, Dict[str, Any]] = {}
+
+        logger.info(f"Extracting contexts from {len(unique_descriptions)} unique descriptions")
+
+        for desc in unique_descriptions:
+            cache_key = desc
+
+            if CONTEXT_CACHE_FIRST and cache_key in cache:
+                context_map[desc] = cache[cache_key]
+                cache_hits += 1
+                continue
+
+            if llm_available:
+                try:
+                    result = extract_contexts_with_llm(
+                        text=desc,
+                        max_contexts=CONTEXT_MAX_CONTEXTS,
+                        provider=provider,
+                        model=LLM_MODEL,
+                        temperature=LLM_TEMPERATURE,
+                        max_tokens=LLM_MAX_TOKENS,
+                        timeout_seconds=LLM_TIMEOUT_SECONDS,
+                        api_key=(
+                            OPENAI_API_KEY
+                            if provider == "openai"
+                            else AZURE_OPENAI_API_KEY
+                            if provider == "azure"
+                            else GEMINI_API_KEY
+                            if provider == "gemini"
+                            else ANTHROPIC_API_KEY
+                            if provider == "anthropic"
+                            else PERPLEXITY_API_KEY
+                        ),
+                        endpoint=AZURE_OPENAI_ENDPOINT,
+                        deployment=AZURE_OPENAI_DEPLOYMENT,
+                        api_version=AZURE_OPENAI_API_VERSION,
+                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                    )
+                    cache_misses += 1
+                except LLMQuotaExceededError as exc:
+                    llm_available = False
+                    logger.warning(
+                        "LLM quota exceeded; skipping remaining context extraction calls for this run"
+                    )
+                    logger.debug(f"Quota error detail: {exc}")
+                    result = {"contexts": []}
+            else:
+                result = {"contexts": []}
+
+            context_map[desc] = result
+            if CONTEXT_CACHE_FIRST:
+                cache[cache_key] = result
+                cache_updated = True
+
+        if CONTEXT_CACHE_FIRST and cache_updated:
+            save_json_file(CONTEXT_CACHE_PATH, cache)
+            logger.info(f"Context extraction cache updated: {cache_hits} hits, {cache_misses} misses")
+
+        # Add contexts column (comma-separated context strings, filtered by min_confidence)
+        def extract_filtered_contexts(desc):
+            result = context_map.get(desc, {"contexts": []})
+            contexts = result.get("contexts", [])
+            
+            # Filter by min_confidence and extract context strings
+            filtered = [
+                ctx.get("context", "")
+                for ctx in contexts
+                if isinstance(ctx, dict) and ctx.get("confidence", 0) >= CONTEXT_MIN_CONFIDENCE
+            ]
+            
+            return ", ".join(filtered)
+
+        df["contexts"] = df["Description"].apply(extract_filtered_contexts)
+        logger.info(f"Context extraction complete; added {len(df)} context entries")
+        return df
+
     def preprocess(self) -> pd.DataFrame:
         """
         Clean and preprocess the raw data.
@@ -749,6 +875,7 @@ class DataPipeline:
         df = self._clean_data(df)
         df = self._normalize_descriptions(df)
         df = self._enrich_categories(df)
+        df = self._extract_contexts(df)
         df = self._engineer_features(df)
         df = self._flag_anomalies(df)
 
