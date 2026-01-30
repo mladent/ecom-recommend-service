@@ -68,3 +68,14 @@ normalization:
     # perplexity:
     #   api_key_env: PERPLEXITY_API_KEY
     #   base_url_env: PERPLEXITY_BASE_URL
+
+# LLM Category Enrichment (cache-first)
+category_enrichment:
+  enabled: false
+  cache_first: true
+  cache_path: data/category_enrichment_cache.json
+  fields:
+    - category
+    - material
+    - size
+    - theme

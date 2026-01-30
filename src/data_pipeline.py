@@ -37,10 +37,15 @@ from src.config import (
     ANTHROPIC_API_KEY,
     PERPLEXITY_API_KEY,
     PERPLEXITY_BASE_URL,
+    ENRICHMENT_ENABLED,
+    ENRICHMENT_CACHE_FIRST,
+    ENRICHMENT_CACHE_PATH,
+    ENRICHMENT_FIELDS,
 )
 from src.utils import (
     normalize_description_basic,
     normalize_description_with_llm,
+    enrich_categories_with_llm,
     LLMQuotaExceededError,
     load_alias_map,
     load_json_file,
@@ -388,6 +393,121 @@ class DataPipeline:
         df["Description"] = df["Description"].map(normalized_map).fillna(df["Description"])
         return df
 
+    def _enrich_categories(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Enrich product descriptions with category attributes using cache-first LLM tagging.
+
+        Args:
+            df (pd.DataFrame): Input dataframe with Description column (should be normalized)
+
+        Returns:
+            pd.DataFrame: Dataframe with added category columns (category, material, size, theme)
+        """
+        if "Description" not in df.columns:
+            return df
+
+        if not ENRICHMENT_ENABLED:
+            logger.info("Category enrichment disabled; skipping")
+            return df
+
+        cache = load_json_file(ENRICHMENT_CACHE_PATH) if ENRICHMENT_CACHE_FIRST else {}
+        cache_updated = False
+        cache_hits = 0
+        cache_misses = 0
+
+        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        llm_available = True
+
+        if provider == "openai" and not OPENAI_API_KEY:
+            llm_available = False
+        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
+            llm_available = False
+        elif provider == "gemini" and not GEMINI_API_KEY:
+            llm_available = False
+        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
+            llm_available = False
+        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
+            llm_available = False
+
+        if not llm_available:
+            logger.warning(
+                "Category enrichment enabled but provider credentials are missing; skipping enrichment"
+            )
+            for field in ENRICHMENT_FIELDS:
+                df[field] = np.nan
+            return df
+
+        # Use original (pre-normalization) Description for cache key to avoid re-tagging identical products
+        # We'll enrich based on the current (normalized) Description value
+        unique_descriptions = df["Description"].dropna().astype(str).unique()
+        enrichment_map: Dict[str, Dict[str, str]] = {}
+
+        logger.info(f"Enriching {len(unique_descriptions)} unique descriptions with {len(ENRICHMENT_FIELDS)} fields")
+
+        for desc in unique_descriptions:
+            # Use description as cache key
+            cache_key = desc
+
+            if ENRICHMENT_CACHE_FIRST and cache_key in cache:
+                enrichment_map[desc] = cache[cache_key]
+                cache_hits += 1
+                continue
+
+            if llm_available:
+                try:
+                    enriched = enrich_categories_with_llm(
+                        text=desc,
+                        fields=ENRICHMENT_FIELDS,
+                        provider=provider,
+                        model=LLM_MODEL,
+                        temperature=LLM_TEMPERATURE,
+                        max_tokens=LLM_MAX_TOKENS,
+                        timeout_seconds=LLM_TIMEOUT_SECONDS,
+                        api_key=(
+                            OPENAI_API_KEY
+                            if provider == "openai"
+                            else AZURE_OPENAI_API_KEY
+                            if provider == "azure"
+                            else GEMINI_API_KEY
+                            if provider == "gemini"
+                            else ANTHROPIC_API_KEY
+                            if provider == "anthropic"
+                            else PERPLEXITY_API_KEY
+                        ),
+                        endpoint=AZURE_OPENAI_ENDPOINT,
+                        deployment=AZURE_OPENAI_DEPLOYMENT,
+                        api_version=AZURE_OPENAI_API_VERSION,
+                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                    )
+                    cache_misses += 1
+                except LLMQuotaExceededError as exc:
+                    llm_available = False
+                    logger.warning(
+                        "LLM quota exceeded; skipping remaining category enrichment calls for this run"
+                    )
+                    logger.debug(f"Quota error detail: {exc}")
+                    enriched = {field: "NaN" for field in ENRICHMENT_FIELDS}
+            else:
+                enriched = {field: "NaN" for field in ENRICHMENT_FIELDS}
+
+            enrichment_map[desc] = enriched
+            if ENRICHMENT_CACHE_FIRST:
+                cache[cache_key] = enriched
+                cache_updated = True
+
+        if ENRICHMENT_CACHE_FIRST and cache_updated:
+            save_json_file(ENRICHMENT_CACHE_PATH, cache)
+            logger.info(f"Category enrichment cache updated: {cache_hits} hits, {cache_misses} misses")
+
+        # Add enrichment columns to dataframe
+        for field in ENRICHMENT_FIELDS:
+            df[field] = df["Description"].map(lambda d: enrichment_map.get(d, {}).get(field, "NaN"))
+            # Convert "NaN" strings to actual NaN
+            df[field] = df[field].replace("NaN", np.nan)
+
+        logger.info(f"Category enrichment complete; added columns: {ENRICHMENT_FIELDS}")
+        return df
+
     def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Create derived features and standardize data for machine learning pipeline.
@@ -435,6 +555,7 @@ class DataPipeline:
         df = self._remove_missing_customers(df)
         df = self._clean_data(df)
         df = self._normalize_descriptions(df)
+        df = self._enrich_categories(df)
         df = self._engineer_features(df)
 
         self.processed_data = df

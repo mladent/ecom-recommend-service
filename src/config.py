@@ -95,6 +95,15 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
 PERPLEXITY_BASE_URL = os.getenv("PERPLEXITY_BASE_URL", "https://api.perplexity.ai")
 
+# LLM Category Enrichment Configuration
+ENRICHMENT_CONFIG = YAML_CONFIG.get("category_enrichment", {})
+ENRICHMENT_ENABLED = _env_bool("LLM_CATEGORY_ENRICHMENT_ENABLED", ENRICHMENT_CONFIG.get("enabled", False))
+ENRICHMENT_CACHE_FIRST = _env_bool("LLM_CATEGORY_CACHE_FIRST", ENRICHMENT_CONFIG.get("cache_first", True))
+ENRICHMENT_CACHE_PATH = _resolve_path(
+    os.getenv("LLM_CATEGORY_CACHE_PATH", ENRICHMENT_CONFIG.get("cache_path", "data/category_enrichment_cache.json"))
+)
+ENRICHMENT_FIELDS = ENRICHMENT_CONFIG.get("fields", ["category", "material", "size", "theme"])
+
 
 def validate_config():
     """Validate critical configuration values."""

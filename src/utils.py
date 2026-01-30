@@ -283,3 +283,168 @@ def normalize_description_with_llm(
             raise LLMQuotaExceededError(message) from exc
         logger.warning(f"LLM normalization failed ({provider}): {exc}")
         return text
+
+
+def enrich_categories_with_llm(
+    text: str,
+    fields: List[str],
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    timeout_seconds: int,
+    api_key: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    deployment: Optional[str] = None,
+    api_version: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Extract category attributes from a product description using an LLM provider.
+    
+    Args:
+        text: Product description to enrich
+        fields: List of fields to extract (e.g., ['category', 'material', 'size', 'theme'])
+        provider: LLM provider name
+        model: Model identifier
+        temperature: Generation temperature
+        max_tokens: Max tokens for response
+        timeout_seconds: Request timeout
+        api_key: API key for the provider
+        endpoint: API endpoint (Azure)
+        deployment: Deployment name (Azure)
+        api_version: API version (Azure)
+        base_url: Base URL (OpenAI, Perplexity)
+    
+    Returns:
+        Dict mapping field names to extracted values (NaN string for missing values)
+    """
+    if not text:
+        return {field: "NaN" for field in fields}
+
+    # Build prompt requesting JSON output
+    fields_str = ", ".join(fields)
+    prompt = (
+        f"Extract the following attributes from this product description: {fields_str}. "
+        "Return a JSON object with each field as a key. "
+        'Use "NaN" for any attribute that cannot be determined. '
+        "Be concise and specific.\n"
+        f"Description: {text}\n"
+        "JSON:"
+    )
+
+    try:
+        provider = (provider or "").lower()
+        response_text = ""
+        
+        if provider == "openai":
+            if not api_key:
+                raise RuntimeError("OPENAI_API_KEY missing")
+            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You extract product attributes and return JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["choices"][0]["message"]["content"].strip()
+
+        elif provider == "azure":
+            if not api_key or not endpoint or not deployment:
+                raise RuntimeError("Azure OpenAI credentials or endpoint missing")
+            api_version = api_version or "2024-06-01"
+            url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
+            headers = {"api-key": api_key, "Content-Type": "application/json"}
+            payload = {
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You extract product attributes and return JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["choices"][0]["message"]["content"].strip()
+
+        elif provider == "gemini":
+            if not api_key:
+                raise RuntimeError("GEMINI_API_KEY missing")
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={api_key}"
+            )
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+        elif provider == "anthropic":
+            if not api_key:
+                raise RuntimeError("ANTHROPIC_API_KEY missing")
+            url = "https://api.anthropic.com/v1/messages"
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["content"][0]["text"].strip()
+
+        elif provider == "perplexity":
+            if not api_key:
+                raise RuntimeError("PERPLEXITY_API_KEY missing")
+            base_url = base_url or "https://api.perplexity.ai"
+            url = base_url.rstrip("/") + "/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You extract product attributes and return JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["choices"][0]["message"]["content"].strip()
+
+        else:
+            raise RuntimeError(f"Unsupported LLM provider: {provider}")
+
+        # Parse JSON from response
+        # Some models may wrap JSON in markdown code blocks
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+        
+        result = json.loads(response_text)
+        
+        # Ensure all requested fields are present
+        enriched = {}
+        for field in fields:
+            enriched[field] = result.get(field, "NaN")
+        
+        return enriched
+
+    except Exception as exc:
+        message = str(exc)
+        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
+            raise LLMQuotaExceededError(message) from exc
+        logger.warning(f"LLM category enrichment failed ({provider}): {exc}")
+        return {field: "NaN" for field in fields}
+
