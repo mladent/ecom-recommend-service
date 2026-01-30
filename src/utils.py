@@ -1,9 +1,18 @@
 """Utility functions for the recommendation service."""
 
+import json
 import logging
-from typing import List, Dict, Any
+import os
+import re
+from typing import List, Dict, Any, Optional, Tuple
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 
 logger = logging.getLogger(__name__)
+
+
+class LLMQuotaExceededError(RuntimeError):
+    """Raised when LLM provider reports insufficient quota."""
 
 
 def setup_logging(level: int = logging.INFO) -> None:
@@ -97,3 +106,180 @@ def format_recommendations(recommendations: Dict[str, Any], verbose: bool = Fals
     output.append("=" * 60)
 
     return "\n".join(output)
+
+
+def normalize_description_basic(text: str) -> str:
+    """Basic normalization: lowercase, strip, collapse spaces, normalize units."""
+    if text is None:
+        return ""
+    text = text.strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\b(inches|inch|in\.)\b", "in", text)
+    text = re.sub(r"\b(centimeters|centimetres|cm\.)\b", "cm", text)
+    text = re.sub(r"\b(grams|gram|g\.)\b", "g", text)
+    text = re.sub(r"\b(kilograms|kilogram|kg\.)\b", "kg", text)
+    return text
+
+
+def load_json_file(path: str) -> Dict[str, Any]:
+    """Load a JSON file safely; return empty dict if missing."""
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.warning(f"Failed to load JSON file {path}: {exc}")
+        return {}
+
+
+def save_json_file(path: str, data: Dict[str, Any]) -> None:
+    """Save a JSON file safely."""
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_alias_map(path: str) -> Dict[str, str]:
+    """Load alias map for canonical description mapping."""
+    raw = load_json_file(path)
+    if not isinstance(raw, dict):
+        return {}
+    return {normalize_description_basic(k): normalize_description_basic(v) for k, v in raw.items()}
+
+
+def _http_post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+    """POST JSON and return parsed JSON response."""
+    data = json.dumps(payload).encode("utf-8")
+    request = Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise RuntimeError(f"HTTP error {exc.code}: {exc.read().decode('utf-8')}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Network error: {exc}") from exc
+
+
+def normalize_description_with_llm(
+    text: str,
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    timeout_seconds: int,
+    api_key: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    deployment: Optional[str] = None,
+    api_version: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> str:
+    """
+    Normalize a product description with an LLM provider. Falls back to input on failure.
+    """
+    if not text:
+        return ""
+
+    prompt = (
+        "Normalize the product description for catalog matching. "
+        "Fix casing, spelling, and standardize units. "
+        "Return only the canonical product name without quotes or extra text.\n"
+        f"Description: {text}"
+    )
+
+    try:
+        provider = (provider or "").lower()
+        if provider == "openai":
+            if not api_key:
+                raise RuntimeError("OPENAI_API_KEY missing")
+            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You normalize product descriptions."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            return data["choices"][0]["message"]["content"].strip()
+
+        if provider == "azure":
+            if not api_key or not endpoint or not deployment:
+                raise RuntimeError("Azure OpenAI credentials or endpoint missing")
+            api_version = api_version or "2024-06-01"
+            url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
+            headers = {"api-key": api_key, "Content-Type": "application/json"}
+            payload = {
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You normalize product descriptions."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            return data["choices"][0]["message"]["content"].strip()
+
+        if provider == "gemini":
+            if not api_key:
+                raise RuntimeError("GEMINI_API_KEY missing")
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={api_key}"
+            )
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+        if provider == "anthropic":
+            if not api_key:
+                raise RuntimeError("ANTHROPIC_API_KEY missing")
+            url = "https://api.anthropic.com/v1/messages"
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            return data["content"][0]["text"].strip()
+
+        if provider == "perplexity":
+            if not api_key:
+                raise RuntimeError("PERPLEXITY_API_KEY missing")
+            base_url = base_url or "https://api.perplexity.ai"
+            url = base_url.rstrip("/") + "/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You normalize product descriptions."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            return data["choices"][0]["message"]["content"].strip()
+
+        raise RuntimeError(f"Unsupported LLM provider: {provider}")
+    except Exception as exc:
+        message = str(exc)
+        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
+            raise LLMQuotaExceededError(message) from exc
+        logger.warning(f"LLM normalization failed ({provider}): {exc}")
+        return text

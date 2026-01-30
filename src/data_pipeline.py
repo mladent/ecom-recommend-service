@@ -18,6 +18,33 @@ from src.config import (
     MIN_CONFIDENCE,
     MAX_BUNDLE_SIZE,
     RANDOM_STATE,
+    NORMALIZATION_ENABLED,
+    NORMALIZATION_CACHE_FIRST,
+    NORMALIZATION_CACHE_PATH,
+    NORMALIZATION_ALIAS_MAP_PATH,
+    NORMALIZATION_MIN_LENGTH,
+    LLM_PROVIDER,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    LLM_MAX_TOKENS,
+    LLM_TIMEOUT_SECONDS,
+    OPENAI_API_KEY,
+    AZURE_OPENAI_API_KEY,
+    AZURE_OPENAI_ENDPOINT,
+    AZURE_OPENAI_DEPLOYMENT,
+    AZURE_OPENAI_API_VERSION,
+    GEMINI_API_KEY,
+    ANTHROPIC_API_KEY,
+    PERPLEXITY_API_KEY,
+    PERPLEXITY_BASE_URL,
+)
+from src.utils import (
+    normalize_description_basic,
+    normalize_description_with_llm,
+    LLMQuotaExceededError,
+    load_alias_map,
+    load_json_file,
+    save_json_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -258,6 +285,109 @@ class DataPipeline:
 
         return df
 
+    def _normalize_descriptions(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalize product descriptions using cache-first LLM normalization.
+
+        Args:
+            df (pd.DataFrame): Input dataframe containing a Description column
+
+        Returns:
+            pd.DataFrame: Dataframe with normalized Description values
+        """
+        if "Description" not in df.columns:
+            return df
+
+        alias_map = load_alias_map(NORMALIZATION_ALIAS_MAP_PATH)
+        cache = load_json_file(NORMALIZATION_CACHE_PATH) if NORMALIZATION_CACHE_FIRST else {}
+        cache_updated = False
+
+        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        llm_available = NORMALIZATION_ENABLED
+
+        if provider == "openai" and not OPENAI_API_KEY:
+            llm_available = False
+        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
+            llm_available = False
+        elif provider == "gemini" and not GEMINI_API_KEY:
+            llm_available = False
+        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
+            llm_available = False
+        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
+            llm_available = False
+
+        if NORMALIZATION_ENABLED and not llm_available:
+            logger.warning(
+                "LLM normalization enabled but provider credentials are missing; falling back to basic normalization"
+            )
+
+        unique_descriptions = df["Description"].dropna().astype(str).unique()
+        normalized_map: Dict[str, str] = {}
+
+        for raw in unique_descriptions:
+            basic = normalize_description_basic(raw)
+            if len(basic) < NORMALIZATION_MIN_LENGTH:
+                normalized_map[raw] = basic
+                continue
+
+            if NORMALIZATION_CACHE_FIRST and basic in cache:
+                normalized_map[raw] = cache[basic]
+                continue
+
+            if basic in alias_map:
+                normalized_map[raw] = alias_map[basic]
+                if NORMALIZATION_CACHE_FIRST:
+                    cache[basic] = alias_map[basic]
+                    cache_updated = True
+                continue
+
+            if llm_available:
+                try:
+                    normalized = normalize_description_with_llm(
+                        text=basic,
+                        provider=provider,
+                        model=LLM_MODEL,
+                        temperature=LLM_TEMPERATURE,
+                        max_tokens=LLM_MAX_TOKENS,
+                        timeout_seconds=LLM_TIMEOUT_SECONDS,
+                        api_key=(
+                            OPENAI_API_KEY
+                            if provider == "openai"
+                            else AZURE_OPENAI_API_KEY
+                            if provider == "azure"
+                            else GEMINI_API_KEY
+                            if provider == "gemini"
+                            else ANTHROPIC_API_KEY
+                            if provider == "anthropic"
+                            else PERPLEXITY_API_KEY
+                        ),
+                        endpoint=AZURE_OPENAI_ENDPOINT,
+                        deployment=AZURE_OPENAI_DEPLOYMENT,
+                        api_version=AZURE_OPENAI_API_VERSION,
+                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                    )
+                except LLMQuotaExceededError as exc:
+                    llm_available = False
+                    logger.warning(
+                        "LLM quota exceeded; skipping remaining LLM normalization calls for this run"
+                    )
+                    logger.debug(f"Quota error detail: {exc}")
+                    normalized = basic
+                normalized = normalize_description_basic(normalized)
+            else:
+                normalized = basic
+
+            normalized_map[raw] = normalized
+            if NORMALIZATION_CACHE_FIRST:
+                cache[basic] = normalized
+                cache_updated = True
+
+        if NORMALIZATION_CACHE_FIRST and cache_updated:
+            save_json_file(NORMALIZATION_CACHE_PATH, cache)
+
+        df["Description"] = df["Description"].map(normalized_map).fillna(df["Description"])
+        return df
+
     def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Create derived features and standardize data for machine learning pipeline.
@@ -284,7 +414,8 @@ class DataPipeline:
         df["InvoiceSeason"] = df["InvoiceDate"].dt.month % 12 // 3 + 1 
         df["InvoiceDayOfWeek"] = df["InvoiceDate"].dt.dayofweek + 1
         df["TransactionValue"] = df["Quantity"] * df["UnitPrice"]
-        df["Description"] = df["Description"].str.strip().str.lower()
+        if not NORMALIZATION_ENABLED:
+            df["Description"] = df["Description"].str.strip().str.lower()
         return df
 
     def preprocess(self) -> pd.DataFrame:
@@ -303,6 +434,7 @@ class DataPipeline:
         df = self._handle_cancellations(df)
         df = self._remove_missing_customers(df)
         df = self._clean_data(df)
+        df = self._normalize_descriptions(df)
         df = self._engineer_features(df)
 
         self.processed_data = df

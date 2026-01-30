@@ -20,6 +20,21 @@ def _load_yaml_config(config_path="config/settings.yaml"):
             return yaml.safe_load(f)
     return {}
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse environment variable as boolean with fallback default."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _resolve_path(path_value: str) -> str:
+    """Resolve relative paths against the project root."""
+    if not path_value:
+        return path_value
+    return path_value if os.path.isabs(path_value) else str(PROJECT_ROOT / path_value)
+
 YAML_CONFIG = _load_yaml_config()
 
 # Data Configuration
@@ -50,10 +65,35 @@ SVM_C = float(os.getenv("SVM_C", YAML_CONFIG.get("algorithms", {}).get("svm", {}
 KAGGLE_USERNAME = os.getenv("KAGGLE_USERNAME")
 KAGGLE_KEY = os.getenv("KAGGLE_KEY")
 
-# LLM Configuration (for future use)
-# LLM_API_KEY = os.getenv("LLM_API_KEY")
-# LLM_MODEL = os.getenv("LLM_MODEL")
-# LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.7))
+# LLM Normalization Configuration
+NORMALIZATION_CONFIG = YAML_CONFIG.get("normalization", {})
+NORMALIZATION_ENABLED = _env_bool("LLM_NORMALIZATION_ENABLED", NORMALIZATION_CONFIG.get("enabled", False))
+NORMALIZATION_CACHE_FIRST = _env_bool("LLM_CACHE_FIRST", NORMALIZATION_CONFIG.get("cache_first", True))
+NORMALIZATION_CACHE_PATH = _resolve_path(
+    os.getenv("LLM_CACHE_PATH", NORMALIZATION_CONFIG.get("cache_path", "data/normalization_cache.json"))
+)
+NORMALIZATION_ALIAS_MAP_PATH = _resolve_path(
+    os.getenv("LLM_ALIAS_MAP_PATH", NORMALIZATION_CONFIG.get("alias_map_path", "data/description_aliases.json"))
+)
+NORMALIZATION_MIN_LENGTH = int(os.getenv("LLM_MIN_LENGTH", NORMALIZATION_CONFIG.get("min_length", 3)))
+
+LLM_CONFIG = NORMALIZATION_CONFIG.get("llm", {})
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", LLM_CONFIG.get("provider", "openai")).lower()
+LLM_MODEL = os.getenv("LLM_MODEL", LLM_CONFIG.get("model", "gpt-4o-mini"))
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", LLM_CONFIG.get("temperature", 0.0)))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", LLM_CONFIG.get("max_tokens", 64)))
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", LLM_CONFIG.get("timeout_seconds", 20)))
+
+# Provider API credentials
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-06-01")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
+PERPLEXITY_BASE_URL = os.getenv("PERPLEXITY_BASE_URL", "https://api.perplexity.ai")
 
 
 def validate_config():
