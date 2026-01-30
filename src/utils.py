@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import hashlib
 from typing import List, Dict, Any, Optional, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -770,3 +771,215 @@ def extract_contexts_with_llm(
             raise LLMQuotaExceededError(message) from exc
         logger.warning(f"LLM context extraction failed ({provider}): {exc}")
         return {"contexts": []}
+
+
+def load_inventory_csv(path: str) -> Dict[str, bool]:
+    """
+    Load inventory availability from a local CSV file.
+
+    Expected columns (case-insensitive):
+    - description
+    - in_stock / available / stock
+
+    Note: In a real production system, this should be replaced with an external
+    inventory API integration instead of reading a local CSV file.
+    """
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        import pandas as pd
+
+        df = pd.read_csv(path)
+        if df.empty:
+            return {}
+
+        columns = {c.lower(): c for c in df.columns}
+        desc_col = columns.get("description") or columns.get("item") or columns.get("product")
+        stock_col = columns.get("in_stock") or columns.get("available") or columns.get("stock")
+
+        if not desc_col or not stock_col:
+            logger.warning("Inventory CSV missing required columns: description + in_stock/available/stock")
+            return {}
+
+        inventory = {}
+        for _, row in df.iterrows():
+            desc = str(row[desc_col]).strip().lower()
+            if not desc:
+                continue
+            raw = str(row[stock_col]).strip().lower()
+            in_stock = raw in {"1", "true", "yes", "y", "in_stock", "available"}
+            inventory[desc] = in_stock
+
+        return inventory
+    except Exception as exc:
+        logger.warning(f"Failed to load inventory CSV {path}: {exc}")
+        return {}
+
+
+def _candidate_hash(candidates: List[str]) -> str:
+    payload = "|".join(sorted(candidates))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def select_alternatives_with_llm(
+    missing_item: str,
+    candidates: List[str],
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    timeout_seconds: int,
+    max_alternatives: int,
+    api_key: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    deployment: Optional[str] = None,
+    api_version: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Use LLM to select alternatives for an out-of-stock item from candidates.
+    Returns list of {item, score, reason}.
+    """
+    if not missing_item or not candidates:
+        return []
+
+    prompt = (
+        "You are selecting replacement items for out-of-stock products. "
+        "Choose the closest alternatives based on category or description similarity. "
+        "Return JSON with alternatives array of objects {item, score, reason}. "
+        "Score from 0.0 to 1.0. Only include items from the candidate list.\n"
+        f"Missing item: {missing_item}\n"
+        f"Candidates: {json.dumps(candidates[:200])}\n"
+        "JSON:"
+    )
+
+    try:
+        provider = (provider or "").lower()
+        response_text = ""
+
+        if provider == "openai":
+            if not api_key:
+                raise RuntimeError("OPENAI_API_KEY missing")
+            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You select closest replacement items and return JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["choices"][0]["message"]["content"].strip()
+
+        elif provider == "azure":
+            if not api_key or not endpoint or not deployment:
+                raise RuntimeError("Azure OpenAI credentials or endpoint missing")
+            api_version = api_version or "2024-06-01"
+            url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
+            headers = {"api-key": api_key, "Content-Type": "application/json"}
+            payload = {
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You select closest replacement items and return JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["choices"][0]["message"]["content"].strip()
+
+        elif provider == "gemini":
+            if not api_key:
+                raise RuntimeError("GEMINI_API_KEY missing")
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={api_key}"
+            )
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+        elif provider == "anthropic":
+            if not api_key:
+                raise RuntimeError("ANTHROPIC_API_KEY missing")
+            url = "https://api.anthropic.com/v1/messages"
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["content"][0]["text"].strip()
+
+        elif provider == "perplexity":
+            if not api_key:
+                raise RuntimeError("PERPLEXITY_API_KEY missing")
+            base_url = base_url or "https://api.perplexity.ai"
+            url = base_url.rstrip("/") + "/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": "You select closest replacement items and return JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            data = _http_post_json(url, headers, payload, timeout_seconds)
+            response_text = data["choices"][0]["message"]["content"].strip()
+
+        else:
+            raise RuntimeError(f"Unsupported LLM provider: {provider}")
+
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+
+        result = json.loads(response_text)
+        alternatives = result.get("alternatives", []) if isinstance(result, dict) else result
+        if not isinstance(alternatives, list):
+            return []
+        return alternatives[:max_alternatives]
+
+    except Exception as exc:
+        message = str(exc)
+        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
+            raise LLMQuotaExceededError(message) from exc
+        logger.warning(f"LLM alternative selection failed ({provider}): {exc}")
+        return []
+
+
+def select_alternative_heuristic(missing_item: str, candidates: List[str]) -> Optional[Dict[str, Any]]:
+    """Fallback: choose candidate with highest token overlap similarity."""
+    if not missing_item or not candidates:
+        return None
+    missing_tokens = set(normalize_description_basic(missing_item).split())
+    if not missing_tokens:
+        return None
+
+    best = None
+    best_score = 0.0
+    for cand in candidates:
+        cand_tokens = set(normalize_description_basic(cand).split())
+        if not cand_tokens:
+            continue
+        score = len(missing_tokens & cand_tokens) / max(len(missing_tokens | cand_tokens), 1)
+        if score > best_score:
+            best_score = score
+            best = {"item": cand, "score": score, "reason": "token-overlap"}
+    return best
