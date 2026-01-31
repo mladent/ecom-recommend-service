@@ -261,6 +261,11 @@ def main():
         action="store_true",
         help="Verbose logging",
     )
+    parser.add_argument(
+        "--api",
+        action="store_true",
+        help="Launch REST API server for bundle recommendations",
+    )
 
     args = parser.parse_args()
 
@@ -308,7 +313,22 @@ def main():
         if not evaluate_data():
             return 1
 
-    if not any([args.download, args.prepare, args.train, args.demo, args.full, args.evaluate_data]):
+    if args.api:
+        logger.info("Launching REST API server...")
+        from src.api import app
+        port = 5000
+        logger.info(f"API server starting on http://0.0.0.0:{port}")
+        logger.info(f"Available endpoints:")
+        logger.info(f"  GET  /health")
+        logger.info(f"  GET  /api/v1/recommenders")
+        logger.info(f"  GET  /api/v1/bundles?product_id=X")
+        logger.info(f"  POST /api/v1/bundles/batch")
+        logger.info(f"  GET  /api/v1/cross-sell?product_id=X")
+        logger.info(f"  GET  /api/v1/stats")
+        app.run(host="0.0.0.0", port=port, debug=args.verbose)
+        return 0
+
+    if not any([args.download, args.prepare, args.train, args.demo, args.full, args.evaluate_data, args.api]):
         logger.info("No action specified. Use --help for options.")
         logger.info("Quick start: python main.py --full")
         return 0
