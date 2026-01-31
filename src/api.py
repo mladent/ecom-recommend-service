@@ -2,8 +2,9 @@
 
 import json
 import logging
+import os
 from typing import Dict, Any, List, Optional, Tuple
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 
 from src.recommendation_engine import BundleRecommendationEngine
@@ -412,10 +413,37 @@ def get_stats() -> Tuple[Dict[str, Any], int]:
         }), 500
 
 
+# Static file serving for web UI
+@app.route("/")
+def serve_index():
+    """Serve the main index.html page."""
+    web_dir = os.path.join(os.path.dirname(__file__), "web")
+    if os.path.exists(os.path.join(web_dir, "index.html")):
+        return send_file(os.path.join(web_dir, "index.html"))
+    return jsonify({"status": "error", "message": "Web UI not found"}), 404
+
+
+@app.route("/assets/<path:filename>")
+def serve_static(filename):
+    """Serve static files (JS, CSS, TSV) from web directory."""
+    web_dir = os.path.join(os.path.dirname(__file__), "web")
+    file_path = os.path.join(web_dir, filename)
+    
+    # Security check: prevent directory traversal
+    if not os.path.abspath(file_path).startswith(os.path.abspath(web_dir)):
+        return jsonify({"status": "error", "message": "Forbidden"}), 403
+    
+    if os.path.exists(file_path):
+        return send_from_directory(web_dir, filename)
+    return jsonify({"status": "error", "message": "File not found"}), 404
+
+
+
 @app.errorhandler(404)
 def not_found(error) -> Tuple[Dict[str, str], int]:
     """Handle 404 errors."""
     return jsonify({"status": "error", "message": "Endpoint not found"}), 404
+
 
 
 @app.errorhandler(500)
