@@ -84,14 +84,14 @@ def get_bundles_for_product() -> Tuple[Dict[str, Any], int]:
     Get bundle recommendations for a product from all available models.
     
     Query Parameters:
-        product_id (str, required): Product ID/description
+        product_description (str, required): Product description
         threshold (float, optional): Confidence threshold (0.0-1.0), default: 0.3
         top_n (int, optional): Number of bundles per model, default: 5
     
     Returns:
         {
             "status": "success",
-            "product_id": str,
+            "product_description": str,
             "recommendations": [
                 {
                     "recommender": str,
@@ -106,9 +106,9 @@ def get_bundles_for_product() -> Tuple[Dict[str, Any], int]:
     """
     try:
         # Get query parameters
-        product_id = request.args.get("product_id", "").strip()
-        if not product_id:
-            return jsonify({"status": "error", "message": "product_id parameter is required"}), 400
+        product_description = request.args.get("product_description", "").strip()
+        if not product_description:
+            return jsonify({"status": "error", "message": "product_description parameter is required"}), 400
         
         threshold = request.args.get("threshold", 0.3, type=float)
         if not 0.0 <= threshold <= 1.0:
@@ -128,7 +128,7 @@ def get_bundles_for_product() -> Tuple[Dict[str, Any], int]:
         for recommender_name in engine.recommenders.keys():
             try:
                 recommendation = engine.recommend_bundles(
-                    customer_transaction=[product_id],
+                    customer_transaction=[product_description],
                     threshold=threshold,
                     recommender_name=recommender_name
                 )
@@ -160,7 +160,7 @@ def get_bundles_for_product() -> Tuple[Dict[str, Any], int]:
         
         return jsonify({
             "status": "success",
-            "product_id": product_id,
+            "product_description": product_description,
             "recommendations": recommendations,
             "ensemble_confidence": round(ensemble_confidence, 3),
             "total_models": len(engine.recommenders)
@@ -181,7 +181,7 @@ def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
     
     Request Body:
         {
-            "products": [list of product IDs],
+            "product_descriptions": [list of product descriptions],
             "threshold": 0.3,
             "top_n": 5
         }
@@ -191,7 +191,7 @@ def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
             "status": "success",
             "results": [
                 {
-                    "product_id": str,
+                    "product_description": str,
                     "recommendations": [per-model recommendations],
                     "ensemble_confidence": float,
                     "total_models": int
@@ -205,9 +205,9 @@ def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
         if not data:
             return jsonify({"status": "error", "message": "Request body must be JSON"}), 400
         
-        products = data.get("products", [])
-        if not isinstance(products, list) or len(products) == 0:
-            return jsonify({"status": "error", "message": "products must be a non-empty list"}), 400
+        product_descriptions = data.get("product_descriptions", [])
+        if not isinstance(product_descriptions, list) or len(product_descriptions) == 0:
+            return jsonify({"status": "error", "message": "product_descriptions must be a non-empty list"}), 400
         
         threshold = data.get("threshold", 0.3)
         if not 0.0 <= threshold <= 1.0:
@@ -222,10 +222,10 @@ def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
         
         # Compute recommendations for each product
         results = []
-        for product_id in products:
+        for product_description in product_descriptions:
             try:
-                product_id = str(product_id).strip()
-                if not product_id:
+                product_description = str(product_description).strip()
+                if not product_description:
                     continue
                 
                 # Get recommendations from all recommenders
@@ -235,7 +235,7 @@ def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
                 for recommender_name in engine.recommenders.keys():
                     try:
                         recommendation = engine.recommend_bundles(
-                            customer_transaction=[product_id],
+                            customer_transaction=[product_description],
                             threshold=threshold,
                             recommender_name=recommender_name
                         )
@@ -253,7 +253,7 @@ def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
                         confidences.append(confidence)
                     
                     except Exception as exc:
-                        logger.warning(f"Error from {recommender_name} for {product_id}: {exc}")
+                        logger.warning(f"Error from {recommender_name} for {product_description}: {exc}")
                         recommendations.append({
                             "recommender": recommender_name,
                             "error": str(exc),
@@ -265,16 +265,16 @@ def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
                 ensemble_confidence = sum(confidences) / len(confidences) if confidences else 0.0
                 
                 results.append({
-                    "product_id": product_id,
+                    "product_description": product_description,
                     "recommendations": recommendations,
                     "ensemble_confidence": round(ensemble_confidence, 3),
                     "total_models": len(engine.recommenders)
                 })
             
             except Exception as exc:
-                logger.warning(f"Error processing product {product_id}: {exc}")
+                logger.warning(f"Error processing product {product_description}: {exc}")
                 results.append({
-                    "product_id": str(product_id),
+                    "product_description": str(product_description),
                     "error": str(exc),
                     "recommendations": [],
                     "total_models": 0
@@ -300,13 +300,13 @@ def get_cross_sell() -> Tuple[Dict[str, Any], int]:
     Get cross-sell product suggestions for a product from all available models.
     
     Query Parameters:
-        product_id (str, required): Product ID/description
+        product_description (str, required): Product description
         top_n (int, optional): Number of suggestions per model, default: 5
     
     Returns:
         {
             "status": "success",
-            "product_id": str,
+            "product_description": str,
             "suggestions": [
                 {
                     "recommender": str,
@@ -320,9 +320,9 @@ def get_cross_sell() -> Tuple[Dict[str, Any], int]:
         }
     """
     try:
-        product_id = request.args.get("product_id", "").strip()
-        if not product_id:
-            return jsonify({"status": "error", "message": "product_id parameter is required"}), 400
+        product_description = request.args.get("product_description", "").strip()
+        if not product_description:
+            return jsonify({"status": "error", "message": "product_description parameter is required"}), 400
         
         top_n = request.args.get("top_n", 5, type=int)
         if top_n < 1:
@@ -336,7 +336,7 @@ def get_cross_sell() -> Tuple[Dict[str, Any], int]:
         for recommender_name in engine.recommenders.keys():
             try:
                 cross_sell = engine.get_cross_sell_products(
-                    customer_transaction=[product_id],
+                    customer_transaction=[product_description],
                     top_n=top_n,
                     recommender_name=recommender_name
                 )
@@ -363,7 +363,7 @@ def get_cross_sell() -> Tuple[Dict[str, Any], int]:
         
         return jsonify({
             "status": "success",
-            "product_id": product_id,
+            "product_description": product_description,
             "suggestions": suggestions,
             "total_models": len(engine.recommenders)
         }), 200

@@ -326,11 +326,11 @@ GET /api/v1/recommenders
 
 #### 3. Get Bundles for Single Product
 ```bash
-GET /api/v1/bundles?product_id=candle&threshold=0.3&top_n=5
+GET /api/v1/bundles?product_description=candle&threshold=0.3&top_n=5
 ```
 
 **Query Parameters:**
-- `product_id` (required): Product ID/description
+- `product_description` (required): Product description
 - `threshold` (optional, default: 0.3): Confidence threshold (0.0-1.0)
 - `top_n` (optional, default: 5): Max bundles per model
 
@@ -338,7 +338,7 @@ GET /api/v1/bundles?product_id=candle&threshold=0.3&top_n=5
 ```json
 {
   "status": "success",
-  "product_id": "candle",
+  "product_description": "candle",
   "recommendations": [
     {
       "recommender": "naive_bayes",
@@ -369,7 +369,7 @@ POST /api/v1/bundles/batch
 **Request Body:**
 ```json
 {
-  "products": ["candle", "holder", "wick"],
+  "product_descriptions": ["candle", "holder", "wick"],
   "threshold": 0.3,
   "top_n": 5
 }
@@ -381,7 +381,7 @@ POST /api/v1/bundles/batch
   "status": "success",
   "results": [
     {
-      "product_id": "candle",
+      "product_description": "candle",
       "recommendations": [...],
       "ensemble_confidence": 0.715,
       "total_models": 2
@@ -394,18 +394,18 @@ POST /api/v1/bundles/batch
 
 #### 5. Get Cross-Sell Suggestions
 ```bash
-GET /api/v1/cross-sell?product_id=candle&top_n=5
+GET /api/v1/cross-sell?product_description=candle&top_n=5
 ```
 
 **Query Parameters:**
-- `product_id` (required): Product ID/description
+- `product_description` (required): Product description
 - `top_n` (optional, default: 5): Max suggestions per model
 
 **Response:**
 ```json
 {
   "status": "success",
-  "product_id": "candle",
+  "product_description": "candle",
   "suggestions": [
     {
       "recommender": "naive_bayes",
@@ -448,10 +448,10 @@ curl http://localhost:5000/health
 curl http://localhost:5000/api/v1/recommenders
 
 # Get bundles for a product
-curl "http://localhost:5000/api/v1/bundles?product_id=candle&threshold=0.3&top_n=5"
+curl "http://localhost:5000/api/v1/bundles?product_description=candle&threshold=0.3&top_n=5"
 
 # Get cross-sell suggestions
-curl "http://localhost:5000/api/v1/cross-sell?product_id=candle&top_n=5"
+curl "http://localhost:5000/api/v1/cross-sell?product_description=candle&top_n=5"
 
 # Get engine statistics
 curl http://localhost:5000/api/v1/stats
@@ -459,7 +459,7 @@ curl http://localhost:5000/api/v1/stats
 # Batch request (using jq for JSON formatting)
 curl -X POST http://localhost:5000/api/v1/bundles/batch \
   -H "Content-Type: application/json" \
-  -d '{"products": ["candle", "holder"], "threshold": 0.3, "top_n": 5}'
+  -d '{"product_descriptions": ["candle", "holder"], "threshold": 0.3, "top_n": 5}'
 ```
 
 ### Multi-Model Recommendations
