@@ -276,10 +276,204 @@ Edit `.env` file to customize:
 - Model hyperparameters
 - Bundle recommendation thresholds
 
+## REST API (Experimental)
+
+A lightweight Flask REST API is available to serve bundle recommendations via HTTP endpoints. The API supports querying recommendations from all trained recommender models simultaneously.
+
+### API Server Setup
+
+**Install dependencies:**
+```bash
+pip install flask flask-cors
+```
+
+**Launch API server:**
+```bash
+# After training: python main.py --train
+python main.py --api
+```
+
+The API will start on `http://0.0.0.0:5000`
+
+### Available Endpoints
+
+#### 1. Health Check
+```bash
+GET /health
+```
+
+**Response:**
+```json
+{"status": "ok"}
+```
+
+#### 2. List Available Recommenders
+```bash
+GET /api/v1/recommenders
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "recommenders": [
+    {"name": "naive_bayes", "class": "NaiveBayesBundleRecommender", "available": true},
+    {"name": "svm", "class": "SVMBundleRecommender", "available": true}
+  ],
+  "count": 2
+}
+```
+
+#### 3. Get Bundles for Single Product
+```bash
+GET /api/v1/bundles?product_id=candle&threshold=0.3&top_n=5
+```
+
+**Query Parameters:**
+- `product_id` (required): Product ID/description
+- `threshold` (optional, default: 0.3): Confidence threshold (0.0-1.0)
+- `top_n` (optional, default: 5): Max bundles per model
+
+**Response:**
+```json
+{
+  "status": "success",
+  "product_id": "candle",
+  "recommendations": [
+    {
+      "recommender": "naive_bayes",
+      "confidence": 0.75,
+      "bundles": [
+        ["candle", "holder"],
+        ["candle", "wick"]
+      ],
+      "count": 2
+    },
+    {
+      "recommender": "svm",
+      "confidence": 0.68,
+      "bundles": [["candle", "wax"]],
+      "count": 1
+    }
+  ],
+  "ensemble_confidence": 0.715,
+  "total_models": 2
+}
+```
+
+#### 4. Get Bundles for Multiple Products (Batch)
+```bash
+POST /api/v1/bundles/batch
+```
+
+**Request Body:**
+```json
+{
+  "products": ["candle", "holder", "wick"],
+  "threshold": 0.3,
+  "top_n": 5
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "results": [
+    {
+      "product_id": "candle",
+      "recommendations": [...],
+      "ensemble_confidence": 0.715,
+      "total_models": 2
+    },
+    ...
+  ],
+  "total": 3
+}
+```
+
+#### 5. Get Cross-Sell Suggestions
+```bash
+GET /api/v1/cross-sell?product_id=candle&top_n=5
+```
+
+**Query Parameters:**
+- `product_id` (required): Product ID/description
+- `top_n` (optional, default: 5): Max suggestions per model
+
+**Response:**
+```json
+{
+  "status": "success",
+  "product_id": "candle",
+  "suggestions": [
+    {
+      "recommender": "naive_bayes",
+      "products": [
+        {"product": "holder", "affinity_score": 0.95},
+        {"product": "wax", "affinity_score": 0.87}
+      ],
+      "count": 2
+    },
+    ...
+  ],
+  "total_models": 2
+}
+```
+
+#### 6. Get Engine Statistics
+```bash
+GET /api/v1/stats
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "stats": {
+    "total_bundles": 46,
+    "recommenders": ["naive_bayes", "svm"],
+    "total_recommenders": 2
+  }
+}
+```
+
+### Example Requests (cURL)
+
+```bash
+# Health check
+curl http://localhost:5000/health
+
+# List recommenders
+curl http://localhost:5000/api/v1/recommenders
+
+# Get bundles for a product
+curl "http://localhost:5000/api/v1/bundles?product_id=candle&threshold=0.3&top_n=5"
+
+# Get cross-sell suggestions
+curl "http://localhost:5000/api/v1/cross-sell?product_id=candle&top_n=5"
+
+# Get engine statistics
+curl http://localhost:5000/api/v1/stats
+
+# Batch request (using jq for JSON formatting)
+curl -X POST http://localhost:5000/api/v1/bundles/batch \
+  -H "Content-Type: application/json" \
+  -d '{"products": ["candle", "holder"], "threshold": 0.3, "top_n": 5}'
+```
+
+### Multi-Model Recommendations
+
+All endpoints return recommendations from **every trained recommender model** simultaneously. Each recommendation includes:
+- **Per-model confidence score**: How confident each model is
+- **Per-model bundles**: Recommendations from that specific model
+- **Ensemble confidence**: Average confidence across all models
+
+This allows comparing predictions across different algorithms and building robust ensemble results.
+
 ## Future Enhancements
 
 - LLM-based bundle explanations and naming
-- Real-time recommendation API
 - A/B testing framework
 - Advanced feature engineering with LLM embeddings
 - Recommendation personalization with customer profiling
