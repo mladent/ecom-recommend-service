@@ -220,6 +220,38 @@ python main.py --api
 - Contributing
 ```
 
+### 2.4 Documentation File Policy
+
+**Avoid Creating New .md Files**
+- **DO NOT** create new markdown documentation files unless explicitly requested
+- Documentation belongs in code: docstrings, comments, and README.md
+- Exception: Project already has established documentation structure (ARCHITECTURE.md, API.md, etc.)
+
+**Where to Document:**
+```
+✅ In-code docstrings for functions/classes
+✅ README.md for project overview and usage
+✅ Inline comments for complex logic
+✅ Existing .md files if they already exist
+
+❌ New .md files for every feature
+❌ Separate documentation for small changes
+❌ Summary documents after implementations
+❌ "Change log" markdown files
+```
+
+**When New .md Files ARE Appropriate:**
+- User explicitly requests: "Create a DEPLOYMENT.md"
+- Large architectural documentation for complex systems
+- API documentation for public libraries
+- Contributing guidelines for open-source projects
+
+**Rationale:**
+- Reduces documentation sprawl and maintenance burden
+- Keeps documentation close to code (where it's most likely to be updated)
+- Prevents duplication between docs and docstrings
+- Makes it easier to find information (one README vs many scattered files)
+
 ---
 
 ## 3. Validation Best Practices
