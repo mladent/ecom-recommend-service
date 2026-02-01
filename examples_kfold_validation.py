@@ -33,6 +33,88 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def format_metrics_table(metrics_dict: dict, enabled_models: dict) -> str:
+    """
+    Format metrics dictionary as a markdown-style table with separate std columns.
+    
+    Args:
+        metrics_dict: Dictionary mapping model names to their metrics
+        enabled_models: Dictionary mapping model names to boolean (enabled/disabled)
+    
+    Returns:
+        Formatted markdown table string
+    """
+    # Filter to only enabled models
+    enabled_model_names = [name for name, enabled in enabled_models.items() if enabled and name in metrics_dict]
+    
+    if not enabled_model_names:
+        return "No enabled models to display."
+    
+    # Define metrics columns (excluding n_splits)
+    metric_columns = ["accuracy", "precision", "recall", "f1"]
+    
+    # Build header
+    header = "| Model"
+    for metric in metric_columns:
+        header += f" | {metric.capitalize()} | Std {metric.capitalize()}"
+    header += " |"
+    
+    # Build separator
+    separator = "|" + "|-" * (1 + len(metric_columns) * 2) + "|"
+    
+    # Build rows
+    rows = []
+    for model_name in enabled_model_names:
+        model_metrics = metrics_dict[model_name]
+        row = f"| {model_name}"
+        for metric in metric_columns:
+            value = model_metrics.get(metric, 0.0)
+            std_key = f"std_{metric}"
+            std_value = model_metrics.get(std_key, 0.0)
+            row += f" | {value:.4f} | {std_value:.4f}"
+        row += " |"
+        rows.append(row)
+    
+    return "\n".join([header, separator] + rows)
+
+
+def format_comparison_table(metrics_random: dict, metrics_kfold: dict, enabled_models: dict) -> str:
+    """
+    Format side-by-side comparison of random split vs k-fold cross-validation results.
+    
+    Args:
+        metrics_random: Metrics from random split
+        metrics_kfold: Metrics from k-fold cross-validation
+        enabled_models: Dictionary mapping model names to boolean (enabled/disabled)
+    
+    Returns:
+        Formatted markdown table string
+    """
+    # Filter to only enabled models that appear in both results
+    enabled_model_names = [
+        name for name, enabled in enabled_models.items()
+        if enabled and name in metrics_random and name in metrics_kfold
+    ]
+    
+    if not enabled_model_names:
+        return "No enabled models to compare."
+    
+    # Build header
+    header = "| Model | Random Accuracy | K-Fold Accuracy | K-Fold Std | Difference |"
+    separator = "|---|---|---|---|---|"
+    
+    rows = []
+    for model_name in enabled_model_names:
+        random_acc = metrics_random[model_name].get("accuracy", 0.0)
+        kfold_acc = metrics_kfold[model_name].get("accuracy", 0.0)
+        kfold_std = metrics_kfold[model_name].get("std_accuracy", 0.0)
+        diff = abs(random_acc - kfold_acc)
+        row = f"| {model_name} | {random_acc:.4f} | {kfold_acc:.4f} | {kfold_std:.4f} | {diff:.4f} |"
+        rows.append(row)
+    
+    return "\n".join([header, separator] + rows)
+
+
 def parse_arguments() -> tuple[dict, bool]:
     """
     Parse command line arguments to determine which models to run and data size.
@@ -126,6 +208,14 @@ def main():
         logger.info(f"\n{model_name}:")
         for metric_name, metric_value in model_metrics.items():
             logger.info(f"  {metric_name}: {metric_value:.4f}")
+    
+    # ========================================================================
+    # Summary Table: Random Split Results
+    # ========================================================================
+    logger.info("\n" + "=" * 80)
+    logger.info("SUMMARY TABLE: Random Split Metrics")
+    logger.info("=" * 80)
+    logger.info("\n" + format_metrics_table(metrics1, models_config))
 
     # ========================================================================
     # Example 2: 10-Fold Cross-Validation
@@ -159,35 +249,22 @@ def main():
                     logger.info(f"  {metric_name}: {metric_value:.4f} (± {std_value:.4f})")
                 else:
                     logger.info(f"  {metric_name}: {metric_value:.4f}")
+    
+    # ========================================================================
+    # Summary Table: K-Fold Cross-Validation Results
+    # ========================================================================
+    logger.info("\n" + "=" * 80)
+    logger.info("SUMMARY TABLE: 10-Fold Cross-Validation Metrics")
+    logger.info("=" * 80)
+    logger.info("\n" + format_metrics_table(metrics2, models_config))
 
     # ========================================================================
-    # Example 3: Comparison
+    # Example 3: Comparison Summary Table
     # ========================================================================
-    if models_config["naive_bayes"] and "naive_bayes" in metrics1 and "naive_bayes" in metrics2:
-        logger.info("\n" + "=" * 80)
-        logger.info("COMPARISON: Random Split vs K-Fold Cross-Validation (Naive Bayes)")
-        logger.info("=" * 80)
-
-        logger.info("\nNaive Bayes Accuracy Comparison:")
-        nb_random = metrics1["naive_bayes"]["accuracy"]
-        nb_kfold = metrics2["naive_bayes"]["accuracy"]
-        nb_std = metrics2["naive_bayes"]["std_accuracy"]
-        logger.info(f"  Random Split: {nb_random:.4f}")
-        logger.info(f"  K-Fold (mean): {nb_kfold:.4f} (± {nb_std:.4f})")
-        logger.info(f"  Difference: {abs(nb_random - nb_kfold):.4f}")
-
-    if models_config["svm"] and "svm" in metrics1 and "svm" in metrics2:
-        logger.info("\n" + "=" * 80)
-        logger.info("COMPARISON: Random Split vs K-Fold Cross-Validation (SVM)")
-        logger.info("=" * 80)
-
-        logger.info("\nSVM Accuracy Comparison:")
-        svm_random = metrics1["svm"]["accuracy"]
-        svm_kfold = metrics2["svm"]["accuracy"]
-        svm_std = metrics2["svm"]["std_accuracy"]
-        logger.info(f"  Random Split: {svm_random:.4f}")
-        logger.info(f"  K-Fold (mean): {svm_kfold:.4f} (± {svm_std:.4f})")
-        logger.info(f"  Difference: {abs(svm_random - svm_kfold):.4f}")
+    logger.info("\n" + "=" * 80)
+    logger.info("COMPARISON: Random Split vs K-Fold Cross-Validation")
+    logger.info("=" * 80)
+    logger.info("\n" + format_comparison_table(metrics1, metrics2, models_config))
 
     # ========================================================================
     # Example 4: Testing Recommendations
