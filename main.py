@@ -316,15 +316,18 @@ def main():
     if args.api:
         logger.info("Launching REST API server...")
         from src.api import app
-        port = 5000
+        import os
+        # Read port from environment variable with fallback to 5000
+        port = int(os.getenv("PORT", "5000"))
         logger.info(f"API server starting on http://0.0.0.0:{port}")
         logger.info(f"Available endpoints:")
         logger.info(f"  GET  /health")
         logger.info(f"  GET  /api/v1/recommenders")
-        logger.info(f"  GET  /api/v1/bundles?product_id=X")
+        logger.info(f"  GET  /api/v1/bundles?product_description=X")
         logger.info(f"  POST /api/v1/bundles/batch")
-        logger.info(f"  GET  /api/v1/cross-sell?product_id=X")
+        logger.info(f"  GET  /api/v1/cross-sell?product_description=X")
         logger.info(f"  GET  /api/v1/stats")
+        logger.info(f"  GET  /              (Web UI)")
         app.run(host="0.0.0.0", port=port, debug=args.verbose)
         return 0
 

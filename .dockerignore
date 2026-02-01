@@ -1,0 +1,77 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python virtual environments
+venv/
+.venv/
+env/
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter notebooks
+notebooks/
+*.ipynb
+.ipynb_checkpoints/
+
+# Tests
+tests/
+test_*.py
+
+# Documentation (except Docker docs)
+*.md
+!DOCKER_README.md
+
+# Logs
+*.log
+logs/
+
+# Data files (except raw data.csv which we include)
+data/*.tsv
+data/*.pkl
+data/*.json
+data/processed_*
+data/About_Dataset.md
+data/data_report.md
+data/categories_*
+data/Cancellations.tsv
+data/Duplicate_transactions.tsv
+data/no_CustomerID.tsv
+data/suspicious_transactions.tsv
+data/inventory.csv
+
+# Models (will be mounted as volume)
+models/
+*.pkl
+
+# Config
+.env-template
+
+# Example scripts
+examples_*.py
+
+# Misc
+*.csv.gz
+*.zip
+*.tar.gz
+.DS_Store
