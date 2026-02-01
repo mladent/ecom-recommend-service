@@ -73,13 +73,18 @@ logger = logging.getLogger(__name__)
 class DataPipeline:
     """Pipeline for loading, cleaning, and preprocessing e-commerce data."""
 
-    def __init__(self):
-        """Initialize the data pipeline."""
+    def __init__(self, force_reprocess: bool = False):
+        """Initialize the data pipeline.
+        
+        Args:
+            force_reprocess: If True, bypass all LLM caches and reprocess from scratch
+        """
         self.raw_data = None
         self.processed_data = None
         self.products = None
         self.transactions = None
         self.bundles = None
+        self.force_reprocess = force_reprocess
 
     def download_kaggle_data(self) -> bool:
         """
@@ -307,105 +312,23 @@ class DataPipeline:
 
     def _normalize_descriptions(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Normalize product descriptions using cache-first LLM normalization.
+        Normalize product descriptions using Python string lowercasing.
 
         Args:
             df (pd.DataFrame): Input dataframe containing a Description column
 
         Returns:
-            pd.DataFrame: Dataframe with normalized Description values
+            pd.DataFrame: Dataframe with normalized Description values (lowercase, stripped)
         """
         if "Description" not in df.columns:
             return df
 
-        alias_map = load_alias_map(NORMALIZATION_ALIAS_MAP_PATH)
-        cache = load_json_file(NORMALIZATION_CACHE_PATH) if NORMALIZATION_CACHE_FIRST else {}
-        cache_updated = False
-
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-        llm_available = NORMALIZATION_ENABLED
-
-        if provider == "openai" and not OPENAI_API_KEY:
-            llm_available = False
-        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-            llm_available = False
-        elif provider == "gemini" and not GEMINI_API_KEY:
-            llm_available = False
-        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-            llm_available = False
-        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-            llm_available = False
-
-        if NORMALIZATION_ENABLED and not llm_available:
-            logger.warning(
-                "LLM normalization enabled but provider credentials are missing; falling back to basic normalization"
-            )
-
-        unique_descriptions = df["Description"].dropna().astype(str).unique()
-        normalized_map: Dict[str, str] = {}
-
-        for raw in unique_descriptions:
-            basic = normalize_description_basic(raw)
-            if len(basic) < NORMALIZATION_MIN_LENGTH:
-                normalized_map[raw] = basic
-                continue
-
-            if NORMALIZATION_CACHE_FIRST and basic in cache:
-                normalized_map[raw] = cache[basic]
-                continue
-
-            if basic in alias_map:
-                normalized_map[raw] = alias_map[basic]
-                if NORMALIZATION_CACHE_FIRST:
-                    cache[basic] = alias_map[basic]
-                    cache_updated = True
-                continue
-
-            if llm_available:
-                try:
-                    normalized = normalize_description_with_llm(
-                        text=basic,
-                        provider=provider,
-                        model=LLM_MODEL,
-                        temperature=LLM_TEMPERATURE,
-                        max_tokens=LLM_MAX_TOKENS,
-                        timeout_seconds=LLM_TIMEOUT_SECONDS,
-                        api_key=(
-                            OPENAI_API_KEY
-                            if provider == "openai"
-                            else AZURE_OPENAI_API_KEY
-                            if provider == "azure"
-                            else GEMINI_API_KEY
-                            if provider == "gemini"
-                            else ANTHROPIC_API_KEY
-                            if provider == "anthropic"
-                            else PERPLEXITY_API_KEY
-                        ),
-                        endpoint=AZURE_OPENAI_ENDPOINT,
-                        deployment=AZURE_OPENAI_DEPLOYMENT,
-                        api_version=AZURE_OPENAI_API_VERSION,
-                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
-                    )
-                except LLMQuotaExceededError as exc:
-                    llm_available = False
-                    logger.warning(
-                        "LLM quota exceeded; skipping remaining LLM normalization calls for this run"
-                    )
-                    logger.debug(f"Quota error detail: {exc}")
-                    normalized = basic
-                normalized = normalize_description_basic(normalized)
-            else:
-                normalized = basic
-
-            normalized_map[raw] = normalized
-            if NORMALIZATION_CACHE_FIRST:
-                cache[basic] = normalized
-                cache_updated = True
-
-        if NORMALIZATION_CACHE_FIRST and cache_updated:
-            save_json_file(NORMALIZATION_CACHE_PATH, cache)
-
-        df["Description"] = df["Description"].map(normalized_map).fillna(df["Description"])
+        logger.info("Normalizing descriptions with Python string lowercase...")
+        
+        # Simple normalization: lowercase and strip whitespace
+        df["Description"] = df["Description"].astype(str).str.strip().str.lower()
+        
+        logger.info(f"Normalized {df['Description'].nunique()} unique descriptions")
         return df
 
     def _enrich_categories(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -423,9 +346,13 @@ class DataPipeline:
 
         if not ENRICHMENT_ENABLED:
             logger.info("Category enrichment disabled; skipping")
+        if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
             return df
 
-        cache = load_json_file(ENRICHMENT_CACHE_PATH) if ENRICHMENT_CACHE_FIRST else {}
+        cache = load_json_file(ENRICHMENT_CACHE_PATH) if (ENRICHMENT_CACHE_FIRST and not self.force_reprocess) else {}
+        if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
         cache_updated = False
         cache_hits = 0
         cache_misses = 0
@@ -463,7 +390,7 @@ class DataPipeline:
             # Use description as cache key
             cache_key = desc
 
-            if ENRICHMENT_CACHE_FIRST and cache_key in cache:
+            if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache_key in cache:
                 enrichment_map[desc] = cache[cache_key]
                 cache_hits += 1
                 continue
@@ -512,7 +439,7 @@ class DataPipeline:
 
         if ENRICHMENT_CACHE_FIRST and cache_updated:
             save_json_file(ENRICHMENT_CACHE_PATH, cache)
-            logger.info(f"Category enrichment cache updated: {cache_hits} hits, {cache_misses} misses")
+            logger.info(f"Saved enrichment cache to: {ENRICHMENT_CACHE_PATH} ({cache_hits} hits, {cache_misses} misses)")
 
         # Add enrichment columns to dataframe
         for field in ENRICHMENT_FIELDS:
@@ -611,7 +538,9 @@ class DataPipeline:
         if not llm_available:
             logger.warning("Outlier detection enabled but provider credentials are missing; using heuristic labels")
 
-        cache = load_json_file(OUTLIER_CACHE_PATH) if OUTLIER_CACHE_FIRST else {}
+        cache = load_json_file(OUTLIER_CACHE_PATH) if (OUTLIER_CACHE_FIRST and not self.force_reprocess) else {}
+        if OUTLIER_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded outlier cache from: {OUTLIER_CACHE_PATH} ({len(cache)} entries)")
         cache_updated = False
 
         def _record_key(row: pd.Series) -> str:
@@ -638,7 +567,7 @@ class DataPipeline:
 
         for _, row in candidates.iterrows():
             key = row["_record_key"]
-            if OUTLIER_CACHE_FIRST and key in cache:
+            if OUTLIER_CACHE_FIRST and not self.force_reprocess and key in cache:
                 results[key] = cache[key]
                 continue
 
@@ -727,6 +656,7 @@ class DataPipeline:
 
         if OUTLIER_CACHE_FIRST and cache_updated:
             save_json_file(OUTLIER_CACHE_PATH, cache)
+            logger.info(f"Saved outlier cache to: {OUTLIER_CACHE_PATH} ({len(cache)} entries)")
 
         anomalies = df[df["check_anomaly"]]
         if len(anomalies) > 0:
@@ -754,7 +684,9 @@ class DataPipeline:
             logger.info("Context extraction disabled; skipping")
             return df
 
-        cache = load_json_file(CONTEXT_CACHE_PATH) if CONTEXT_CACHE_FIRST else {}
+        cache = load_json_file(CONTEXT_CACHE_PATH) if (CONTEXT_CACHE_FIRST and not self.force_reprocess) else {}
+        if CONTEXT_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded context cache from: {CONTEXT_CACHE_PATH} ({len(cache)} entries)")
         cache_updated = False
         cache_hits = 0
         cache_misses = 0
@@ -788,7 +720,7 @@ class DataPipeline:
         for desc in unique_descriptions:
             cache_key = desc
 
-            if CONTEXT_CACHE_FIRST and cache_key in cache:
+            if CONTEXT_CACHE_FIRST and not self.force_reprocess and cache_key in cache:
                 context_map[desc] = cache[cache_key]
                 cache_hits += 1
                 continue
@@ -837,7 +769,7 @@ class DataPipeline:
 
         if CONTEXT_CACHE_FIRST and cache_updated:
             save_json_file(CONTEXT_CACHE_PATH, cache)
-            logger.info(f"Context extraction cache updated: {cache_hits} hits, {cache_misses} misses")
+            logger.info(f"Saved context cache to: {CONTEXT_CACHE_PATH} ({cache_hits} hits, {cache_misses} misses)")
 
         # Add contexts column (comma-separated context strings, filtered by min_confidence)
         def extract_filtered_contexts(desc):
