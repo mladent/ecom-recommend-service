@@ -38,14 +38,16 @@ def prepare_data(force_reprocess: bool = False):
 
     # Check if processed data exists
     if os.path.exists(PROCESSED_DATA_PATH) and not force_reprocess:
-        logger.info(f"Processed data found at {PROCESSED_DATA_PATH}")
-        pipeline = DataPipeline()
+        logger.info(f"Processed data cache found at: {PROCESSED_DATA_PATH}")
+        pipeline = DataPipeline(force_reprocess=False)
         if pipeline.load_processed_data(PROCESSED_DATA_PATH):
-            logger.info("Using cached processed data")
+            logger.info("Using cached processed data - skipping all preprocessing and LLM operations")
             return pipeline
 
-    # Process raw data
-    pipeline = DataPipeline()
+    # Process raw data (bypass all LLM caches if reprocessing)
+    if force_reprocess:
+        logger.info("Force reprocessing enabled - bypassing all caches")
+    pipeline = DataPipeline(force_reprocess=force_reprocess)
 
     if not os.path.exists(RAW_DATA_PATH):
         logger.error(f"Raw data not found at {RAW_DATA_PATH}")

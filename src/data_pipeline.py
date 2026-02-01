@@ -73,13 +73,18 @@ logger = logging.getLogger(__name__)
 class DataPipeline:
     """Pipeline for loading, cleaning, and preprocessing e-commerce data."""
 
-    def __init__(self):
-        """Initialize the data pipeline."""
+    def __init__(self, force_reprocess: bool = False):
+        """Initialize the data pipeline.
+        
+        Args:
+            force_reprocess: If True, bypass all LLM caches and reprocess from scratch
+        """
         self.raw_data = None
         self.processed_data = None
         self.products = None
         self.transactions = None
         self.bundles = None
+        self.force_reprocess = force_reprocess
 
     def download_kaggle_data(self) -> bool:
         """
@@ -319,7 +324,9 @@ class DataPipeline:
             return df
 
         alias_map = load_alias_map(NORMALIZATION_ALIAS_MAP_PATH)
-        cache = load_json_file(NORMALIZATION_CACHE_PATH) if NORMALIZATION_CACHE_FIRST else {}
+        cache = load_json_file(NORMALIZATION_CACHE_PATH) if (NORMALIZATION_CACHE_FIRST and not self.force_reprocess) else {}
+        if NORMALIZATION_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded normalization cache from: {NORMALIZATION_CACHE_PATH} ({len(cache)} entries)")
         cache_updated = False
 
         provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
@@ -350,7 +357,7 @@ class DataPipeline:
                 normalized_map[raw] = basic
                 continue
 
-            if NORMALIZATION_CACHE_FIRST and basic in cache:
+            if NORMALIZATION_CACHE_FIRST and not self.force_reprocess and basic in cache:
                 normalized_map[raw] = cache[basic]
                 continue
 
@@ -402,8 +409,10 @@ class DataPipeline:
                 cache[basic] = normalized
                 cache_updated = True
 
+            # logger.info(f"Saved normalization cache to: {NORMALIZATION_CACHE_PATH} ({len(cache)} entries)")
         if NORMALIZATION_CACHE_FIRST and cache_updated:
             save_json_file(NORMALIZATION_CACHE_PATH, cache)
+            logger.info(f"Saved normalization cache to: {NORMALIZATION_CACHE_PATH} ({len(cache)} entries)")
 
         df["Description"] = df["Description"].map(normalized_map).fillna(df["Description"])
         return df
@@ -423,9 +432,13 @@ class DataPipeline:
 
         if not ENRICHMENT_ENABLED:
             logger.info("Category enrichment disabled; skipping")
+        if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
             return df
 
-        cache = load_json_file(ENRICHMENT_CACHE_PATH) if ENRICHMENT_CACHE_FIRST else {}
+        cache = load_json_file(ENRICHMENT_CACHE_PATH) if (ENRICHMENT_CACHE_FIRST and not self.force_reprocess) else {}
+        if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
         cache_updated = False
         cache_hits = 0
         cache_misses = 0
@@ -463,7 +476,7 @@ class DataPipeline:
             # Use description as cache key
             cache_key = desc
 
-            if ENRICHMENT_CACHE_FIRST and cache_key in cache:
+            if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache_key in cache:
                 enrichment_map[desc] = cache[cache_key]
                 cache_hits += 1
                 continue
@@ -512,7 +525,7 @@ class DataPipeline:
 
         if ENRICHMENT_CACHE_FIRST and cache_updated:
             save_json_file(ENRICHMENT_CACHE_PATH, cache)
-            logger.info(f"Category enrichment cache updated: {cache_hits} hits, {cache_misses} misses")
+            logger.info(f"Saved enrichment cache to: {ENRICHMENT_CACHE_PATH} ({cache_hits} hits, {cache_misses} misses)")
 
         # Add enrichment columns to dataframe
         for field in ENRICHMENT_FIELDS:
@@ -611,7 +624,9 @@ class DataPipeline:
         if not llm_available:
             logger.warning("Outlier detection enabled but provider credentials are missing; using heuristic labels")
 
-        cache = load_json_file(OUTLIER_CACHE_PATH) if OUTLIER_CACHE_FIRST else {}
+        cache = load_json_file(OUTLIER_CACHE_PATH) if (OUTLIER_CACHE_FIRST and not self.force_reprocess) else {}
+        if OUTLIER_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded outlier cache from: {OUTLIER_CACHE_PATH} ({len(cache)} entries)")
         cache_updated = False
 
         def _record_key(row: pd.Series) -> str:
@@ -638,7 +653,7 @@ class DataPipeline:
 
         for _, row in candidates.iterrows():
             key = row["_record_key"]
-            if OUTLIER_CACHE_FIRST and key in cache:
+            if OUTLIER_CACHE_FIRST and not self.force_reprocess and key in cache:
                 results[key] = cache[key]
                 continue
 
@@ -727,6 +742,7 @@ class DataPipeline:
 
         if OUTLIER_CACHE_FIRST and cache_updated:
             save_json_file(OUTLIER_CACHE_PATH, cache)
+            logger.info(f"Saved outlier cache to: {OUTLIER_CACHE_PATH} ({len(cache)} entries)")
 
         anomalies = df[df["check_anomaly"]]
         if len(anomalies) > 0:
@@ -754,7 +770,9 @@ class DataPipeline:
             logger.info("Context extraction disabled; skipping")
             return df
 
-        cache = load_json_file(CONTEXT_CACHE_PATH) if CONTEXT_CACHE_FIRST else {}
+        cache = load_json_file(CONTEXT_CACHE_PATH) if (CONTEXT_CACHE_FIRST and not self.force_reprocess) else {}
+        if CONTEXT_CACHE_FIRST and not self.force_reprocess and cache:
+            logger.info(f"Loaded context cache from: {CONTEXT_CACHE_PATH} ({len(cache)} entries)")
         cache_updated = False
         cache_hits = 0
         cache_misses = 0
@@ -788,7 +806,7 @@ class DataPipeline:
         for desc in unique_descriptions:
             cache_key = desc
 
-            if CONTEXT_CACHE_FIRST and cache_key in cache:
+            if CONTEXT_CACHE_FIRST and not self.force_reprocess and cache_key in cache:
                 context_map[desc] = cache[cache_key]
                 cache_hits += 1
                 continue
@@ -837,7 +855,7 @@ class DataPipeline:
 
         if CONTEXT_CACHE_FIRST and cache_updated:
             save_json_file(CONTEXT_CACHE_PATH, cache)
-            logger.info(f"Context extraction cache updated: {cache_hits} hits, {cache_misses} misses")
+            logger.info(f"Saved context cache to: {CONTEXT_CACHE_PATH} ({cache_hits} hits, {cache_misses} misses)")
 
         # Add contexts column (comma-separated context strings, filtered by min_confidence)
         def extract_filtered_contexts(desc):
