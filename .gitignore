@@ -5,6 +5,7 @@
 
 # Data files
 data/*.csv
+!data/inventory.csv
 data/*.pkl
 data/*.xlsx*
 data/*.ods*
@@ -15,6 +16,7 @@ data/data_report.md
 data/normalization_cache.json
 data/anomaly_cache.json
 data/context_extraction_cache.json
+data/out_of_stock_alternatives_cache.json
 !data/.gitkeep
 
 # Python

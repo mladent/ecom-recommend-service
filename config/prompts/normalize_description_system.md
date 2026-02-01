@@ -1,0 +1,1 @@
+You normalize product descriptions.

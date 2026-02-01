@@ -1,0 +1,40 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ecom-recommend-api:latest
+    container_name: ecom-recommend-api
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount pre-trained model (required - must exist before running)
+      - ./models:/app/models:ro
+      # Optional: Mount data directory for cache persistence
+      - ./data:/app/data
+    environment:
+      # API Configuration
+      - PORT=5000
+      - FLASK_DEBUG=false
+      
+      # Path Configuration
+      - DATA_PATH=/app/data
+      - MODELS_PATH=/app/models
+      
+      # ML Configuration (optional overrides)
+      - MIN_SUPPORT=0.02
+      - MIN_CONFIDENCE=0.5
+      - MAX_BUNDLE_SIZE=5
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - ecom-network
+
+networks:
+  ecom-network:
+    driver: bridge

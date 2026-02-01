@@ -276,10 +276,286 @@ Edit `.env` file to customize:
 - Model hyperparameters
 - Bundle recommendation thresholds
 
+## REST API (Experimental)
+
+A lightweight Flask REST API is available to serve bundle recommendations via HTTP endpoints. The API supports querying recommendations from all trained recommender models simultaneously, and includes a built-in web UI for interactive product recommendations.
+
+### API Server Setup
+
+**Install dependencies:**
+```bash
+pip install flask flask-cors
+```
+
+**Launch API server:**
+```bash
+# After training: python main.py --train
+python main.py --api
+```
+
+The API will start on `http://0.0.0.0:5000`
+
+**Access the Web UI:**
+- Open your browser and navigate to `http://localhost:5000`
+- Select a product from the dropdown
+- Click "Get Recommendations" to see bundle suggestions
+
+### Web UI Features
+
+The built-in web interface (`src/web/`) provides:
+- **Product Selector**: Dropdown list of products from the training dataset
+- **Real-time Recommendations**: Instant bundle suggestions via API
+- **Confidence Scoring**: Displays model confidence scores for each recommendation
+- **Aggregated Results**: Combines predictions from all trained models
+- **Responsive Design**: Works on desktop and mobile browsers
+
+The web UI automatically loads product data from `src/web/products.tsv` and displays the top 3 bundle recommendations with confidence scores calculated from the ensemble of all recommender models.
+
+### Available Endpoints
+
+#### 1. Health Check
+```bash
+GET /health
+```
+
+**Response:**
+```json
+{"status": "ok"}
+```
+
+#### 2. List Available Recommenders
+```bash
+GET /api/v1/recommenders
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "recommenders": [
+    {"name": "naive_bayes", "class": "NaiveBayesBundleRecommender", "available": true},
+    {"name": "svm", "class": "SVMBundleRecommender", "available": true}
+  ],
+  "count": 2
+}
+```
+
+#### 3. Get Bundles for Single Product
+```bash
+GET /api/v1/bundles?product_description=candle&threshold=0.3&top_n=5
+```
+
+**Query Parameters:**
+- `product_description` (required): Product description
+- `threshold` (optional, default: 0.3): Confidence threshold (0.0-1.0)
+- `top_n` (optional, default: 5): Max bundles per model
+
+**Response:**
+```json
+{
+  "status": "success",
+  "product_description": "candle",
+  "recommendations": [
+    {
+      "recommender": "naive_bayes",
+      "confidence": 0.75,
+      "bundles": [
+        ["candle", "holder"],
+        ["candle", "wick"]
+      ],
+      "count": 2
+    },
+    {
+      "recommender": "svm",
+      "confidence": 0.68,
+      "bundles": [["candle", "wax"]],
+      "count": 1
+    }
+  ],
+  "ensemble_confidence": 0.715,
+  "total_models": 2
+}
+```
+
+#### 4. Get Bundles for Multiple Products (Batch)
+```bash
+POST /api/v1/bundles/batch
+```
+
+**Request Body:**
+```json
+{
+  "product_descriptions": ["candle", "holder", "wick"],
+  "threshold": 0.3,
+  "top_n": 5
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "results": [
+    {
+      "product_description": "candle",
+      "recommendations": [...],
+      "ensemble_confidence": 0.715,
+      "total_models": 2
+    },
+    ...
+  ],
+  "total": 3
+}
+```
+
+#### 5. Get Cross-Sell Suggestions
+```bash
+GET /api/v1/cross-sell?product_description=candle&top_n=5
+```
+
+**Query Parameters:**
+- `product_description` (required): Product description
+- `top_n` (optional, default: 5): Max suggestions per model
+
+**Response:**
+```json
+{
+  "status": "success",
+  "product_description": "candle",
+  "suggestions": [
+    {
+      "recommender": "naive_bayes",
+      "products": [
+        {"product": "holder", "affinity_score": 0.95},
+        {"product": "wax", "affinity_score": 0.87}
+      ],
+      "count": 2
+    },
+    ...
+  ],
+  "total_models": 2
+}
+```
+
+#### 6. Get Engine Statistics
+```bash
+GET /api/v1/stats
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "stats": {
+    "total_bundles": 46,
+    "recommenders": ["naive_bayes", "svm"],
+    "total_recommenders": 2
+  }
+}
+```
+
+### Example Requests (cURL)
+
+**Browser Access:**
+```
+# Open web UI in your browser
+http://localhost:5000
+
+# Or using curl to fetch HTML
+curl http://localhost:5000
+```
+
+**API Requests:**
+```bash
+# Health check
+curl http://localhost:5000/health
+
+# List recommenders
+curl http://localhost:5000/api/v1/recommenders
+
+# Get bundles for a product
+curl "http://localhost:5000/api/v1/bundles?product_description=candle&threshold=0.3&top_n=5"
+
+# Get cross-sell suggestions
+curl "http://localhost:5000/api/v1/cross-sell?product_description=candle&top_n=5"
+
+# Get engine statistics
+curl http://localhost:5000/api/v1/stats
+
+# Batch request (using jq for JSON formatting)
+curl -X POST http://localhost:5000/api/v1/bundles/batch \
+  -H "Content-Type: application/json" \
+  -d '{"product_descriptions": ["candle", "holder"], "threshold": 0.3, "top_n": 5}'
+```
+
+**Static Assets:**
+The web UI loads static files (HTML, JavaScript, product list) from:
+```
+GET /assets/app.js         # JavaScript application logic
+GET /assets/products.tsv   # Product descriptions list
+GET /                      # Main HTML page
+```
+
+### Multi-Model Recommendations
+
+All endpoints return recommendations from **every trained recommender model** simultaneously. Each recommendation includes:
+- **Per-model confidence score**: How confident each model is
+- **Per-model bundles**: Recommendations from that specific model
+- **Ensemble confidence**: Average confidence across all models
+
+This allows comparing predictions across different algorithms and building robust ensemble results.
+
+## Web UI Implementation
+
+### Architecture
+
+The web interface consists of three components:
+
+**1. Backend (Flask API in `src/api.py`)**
+- REST endpoints for recommendations
+- Static file serving for HTML, JavaScript, and product lists
+- CORS enabled for cross-origin requests
+- Multi-model ensemble recommendations
+
+**2. Frontend (HTML in `src/web/index.html`)**
+- Responsive design with gradient styling
+- Product selector dropdown
+- Recommendation button
+- Results display with confidence scores
+- Loading and error states
+
+**3. Application Logic (JavaScript in `src/web/app.js`)**
+- Loads product descriptions from TSV file
+- Populates dropdown on page load
+- Calls `/api/v1/bundles` endpoint with selected product
+- Aggregates results from all recommenders
+- Filters out selected product from results
+- Displays top 3 suggestions with confidence scoring
+
+### Data Flow
+
+1. User opens `http://localhost:5000` in browser
+2. Browser loads `index.html` from `/` endpoint
+3. JavaScript loads `products.tsv` from `/assets/products.tsv`
+4. Dropdown is populated with product descriptions
+5. User selects a product and clicks "Get Recommendations"
+6. JavaScript calls `/api/v1/bundles?product_description=X` (gets top 5 from each model)
+7. API returns recommendations from all trained recommenders
+8. JavaScript extracts non-selected products from bundles
+9. Results are scored by confidence and sorted
+10. Top 3 results display with confidence percentages and frequency
+
+### Customization
+
+To customize the web UI:
+- **Products**: Edit `src/web/products.tsv` to change available products
+- **Styling**: Modify CSS in `src/web/index.html` (gradient colors, fonts, spacing)
+- **Results Count**: Change `topN = 3` in `app.js` `extractTopSuggestions()` function
+- **Threshold**: Adjust API threshold by modifying fetch URL in `handleRecommend()`
+
 ## Future Enhancements
 
 - LLM-based bundle explanations and naming
-- Real-time recommendation API
 - A/B testing framework
 - Advanced feature engineering with LLM embeddings
 - Recommendation personalization with customer profiling
@@ -409,12 +685,19 @@ ecom-recommend-service/
 │   ├── config.py                  # Configuration management
 │   ├── data_pipeline.py           # Data loading and preprocessing
 │   ├── recommendation_engine.py   # ML recommendation algorithms
-│   └── utils.py                   # Utility functions
+│   ├── api.py                     # REST API server (Flask)
+│   ├── utils.py                   # Utility functions
+│   └── web/                       # Web UI (static files)
+│       ├── index.html             # Main web page
+│       ├── app.js                 # JavaScript frontend logic
+│       └── products.tsv           # Product descriptions list
 ├── data/                          # Dataset storage
 │   └── .gitkeep
 ├── models/                        # Trained models (created after training)
 ├── config/                        # Configuration files
-│   └── settings.yaml
+│   ├── settings.yaml
+│   ├── prompts/                   # LLM prompt templates (markdown)
+│   └── schemas/                   # JSON schemas for LLM validation
 ├── tests/                         # Unit tests
 │   ├── __init__.py
 │   └── test_recommendation_engine.py

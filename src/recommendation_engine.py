@@ -3,6 +3,7 @@
 import os
 import pickle
 import logging
+import hashlib
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict, Optional, Union
@@ -20,8 +21,43 @@ from sklearn.metrics import (
     f1_score,
 )
 
-from src.config import RANDOM_STATE, TRAIN_TEST_SPLIT, N_JOBS, SVM_KERNEL, SVM_C
+from src.config import (
+    RANDOM_STATE,
+    TRAIN_TEST_SPLIT,
+    N_JOBS,
+    SVM_KERNEL,
+    SVM_C,
+    OOS_ENABLED,
+    OOS_CACHE_FIRST,
+    OOS_CACHE_PATH,
+    OOS_INVENTORY_PATH,
+    OOS_MAX_ALTERNATIVES,
+    OOS_MIN_SCORE,
+    LLM_PROVIDER,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    LLM_MAX_TOKENS,
+    LLM_TIMEOUT_SECONDS,
+    OPENAI_API_KEY,
+    AZURE_OPENAI_API_KEY,
+    AZURE_OPENAI_ENDPOINT,
+    AZURE_OPENAI_DEPLOYMENT,
+    AZURE_OPENAI_API_VERSION,
+    GEMINI_API_KEY,
+    ANTHROPIC_API_KEY,
+    PERPLEXITY_API_KEY,
+    PERPLEXITY_BASE_URL,
+)
 from src.data_splitter import RandomSplit, KFoldSplit, BundleDataPreprocessor
+from src.utils import (
+    load_inventory_csv,
+    load_json_file,
+    save_json_file,
+    normalize_description_basic,
+    select_alternatives_with_llm,
+    select_alternative_heuristic,
+    LLMQuotaExceededError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -668,6 +704,122 @@ class BundleRecommendationEngine:
                     applicable_bundles.append(bundle)
 
             recommendations["bundles"] = applicable_bundles[:5]  # Top 5
+
+        # Resolve out-of-stock items with alternatives (LLM-assisted)
+        if OOS_ENABLED and recommendations["bundles"]:
+            inventory = load_inventory_csv(OOS_INVENTORY_PATH)
+            in_stock_items = set()
+            for bundle in recommendations["bundles"]:
+                for item in bundle:
+                    normalized = normalize_description_basic(item)
+                    if inventory.get(normalized, True):
+                        in_stock_items.add(item)
+
+            candidates = list(in_stock_items)
+            cache = load_json_file(OOS_CACHE_PATH) if OOS_CACHE_FIRST else {}
+            cache_updated = False
+
+            provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+            llm_available = True
+
+            if provider == "openai" and not OPENAI_API_KEY:
+                llm_available = False
+            elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
+                llm_available = False
+            elif provider == "gemini" and not GEMINI_API_KEY:
+                llm_available = False
+            elif provider == "anthropic" and not ANTHROPIC_API_KEY:
+                llm_available = False
+            elif provider == "perplexity" and not PERPLEXITY_API_KEY:
+                llm_available = False
+
+            candidate_hash = hashlib.sha256("|".join(sorted(candidates)).encode("utf-8")).hexdigest()
+            resolved_bundles = []
+            substitutions = []
+
+            for bundle in recommendations["bundles"]:
+                resolved_bundle = list(bundle)
+                bundle_subs = []
+                for idx, item in enumerate(bundle):
+                    normalized = normalize_description_basic(item)
+                    if inventory.get(normalized, True):
+                        continue
+
+                    cache_key = f"{normalized}|{candidate_hash}"
+                    alternatives = []
+                    if OOS_CACHE_FIRST and cache_key in cache:
+                        alternatives = cache[cache_key].get("alternatives", [])
+                    elif llm_available:
+                        try:
+                            alternatives = select_alternatives_with_llm(
+                                missing_item=item,
+                                candidates=candidates,
+                                provider=provider,
+                                model=LLM_MODEL,
+                                temperature=LLM_TEMPERATURE,
+                                max_tokens=LLM_MAX_TOKENS,
+                                timeout_seconds=LLM_TIMEOUT_SECONDS,
+                                max_alternatives=OOS_MAX_ALTERNATIVES,
+                                api_key=(
+                                    OPENAI_API_KEY
+                                    if provider == "openai"
+                                    else AZURE_OPENAI_API_KEY
+                                    if provider == "azure"
+                                    else GEMINI_API_KEY
+                                    if provider == "gemini"
+                                    else ANTHROPIC_API_KEY
+                                    if provider == "anthropic"
+                                    else PERPLEXITY_API_KEY
+                                ),
+                                endpoint=AZURE_OPENAI_ENDPOINT,
+                                deployment=AZURE_OPENAI_DEPLOYMENT,
+                                api_version=AZURE_OPENAI_API_VERSION,
+                                base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                            )
+                        except LLMQuotaExceededError as exc:
+                            llm_available = False
+                            logger.warning("LLM quota exceeded; falling back to heuristic alternatives")
+                            logger.debug(f"Quota error detail: {exc}")
+                            alternatives = []
+
+                    if not alternatives:
+                        fallback = select_alternative_heuristic(item, candidates)
+                        alternatives = [fallback] if fallback else []
+
+                    best = None
+                    if alternatives:
+                        best = max(alternatives, key=lambda a: float(a.get("score", 0)))
+
+                    if best and float(best.get("score", 0)) >= OOS_MIN_SCORE:
+                        resolved_bundle[idx] = best.get("item")
+                        bundle_subs.append(
+                            {
+                                "missing_item": item,
+                                "alternative_item": best.get("item"),
+                                "score": float(best.get("score", 0)),
+                                "reason": best.get("reason", ""),
+                            }
+                        )
+
+                    if OOS_CACHE_FIRST:
+                        cache[cache_key] = {"alternatives": alternatives}
+                        cache_updated = True
+
+                resolved_bundles.append(tuple(resolved_bundle))
+                if bundle_subs:
+                    substitutions.append(
+                        {
+                            "original_bundle": bundle,
+                            "resolved_bundle": tuple(resolved_bundle),
+                            "substitutions": bundle_subs,
+                        }
+                    )
+
+            recommendations["bundles"] = resolved_bundles
+            recommendations["bundle_substitutions"] = substitutions
+
+            if OOS_CACHE_FIRST and cache_updated:
+                save_json_file(OOS_CACHE_PATH, cache)
 
         return recommendations
 
