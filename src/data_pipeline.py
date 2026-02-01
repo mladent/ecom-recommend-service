@@ -312,109 +312,23 @@ class DataPipeline:
 
     def _normalize_descriptions(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Normalize product descriptions using cache-first LLM normalization.
+        Normalize product descriptions using Python string lowercasing.
 
         Args:
             df (pd.DataFrame): Input dataframe containing a Description column
 
         Returns:
-            pd.DataFrame: Dataframe with normalized Description values
+            pd.DataFrame: Dataframe with normalized Description values (lowercase, stripped)
         """
         if "Description" not in df.columns:
             return df
 
-        alias_map = load_alias_map(NORMALIZATION_ALIAS_MAP_PATH)
-        cache = load_json_file(NORMALIZATION_CACHE_PATH) if (NORMALIZATION_CACHE_FIRST and not self.force_reprocess) else {}
-        if NORMALIZATION_CACHE_FIRST and not self.force_reprocess and cache:
-            logger.info(f"Loaded normalization cache from: {NORMALIZATION_CACHE_PATH} ({len(cache)} entries)")
-        cache_updated = False
-
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-        llm_available = NORMALIZATION_ENABLED
-
-        if provider == "openai" and not OPENAI_API_KEY:
-            llm_available = False
-        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-            llm_available = False
-        elif provider == "gemini" and not GEMINI_API_KEY:
-            llm_available = False
-        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-            llm_available = False
-        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-            llm_available = False
-
-        if NORMALIZATION_ENABLED and not llm_available:
-            logger.warning(
-                "LLM normalization enabled but provider credentials are missing; falling back to basic normalization"
-            )
-
-        unique_descriptions = df["Description"].dropna().astype(str).unique()
-        normalized_map: Dict[str, str] = {}
-
-        for raw in unique_descriptions:
-            basic = normalize_description_basic(raw)
-            if len(basic) < NORMALIZATION_MIN_LENGTH:
-                normalized_map[raw] = basic
-                continue
-
-            if NORMALIZATION_CACHE_FIRST and not self.force_reprocess and basic in cache:
-                normalized_map[raw] = cache[basic]
-                continue
-
-            if basic in alias_map:
-                normalized_map[raw] = alias_map[basic]
-                if NORMALIZATION_CACHE_FIRST:
-                    cache[basic] = alias_map[basic]
-                    cache_updated = True
-                continue
-
-            if llm_available:
-                try:
-                    normalized = normalize_description_with_llm(
-                        text=basic,
-                        provider=provider,
-                        model=LLM_MODEL,
-                        temperature=LLM_TEMPERATURE,
-                        max_tokens=LLM_MAX_TOKENS,
-                        timeout_seconds=LLM_TIMEOUT_SECONDS,
-                        api_key=(
-                            OPENAI_API_KEY
-                            if provider == "openai"
-                            else AZURE_OPENAI_API_KEY
-                            if provider == "azure"
-                            else GEMINI_API_KEY
-                            if provider == "gemini"
-                            else ANTHROPIC_API_KEY
-                            if provider == "anthropic"
-                            else PERPLEXITY_API_KEY
-                        ),
-                        endpoint=AZURE_OPENAI_ENDPOINT,
-                        deployment=AZURE_OPENAI_DEPLOYMENT,
-                        api_version=AZURE_OPENAI_API_VERSION,
-                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
-                    )
-                except LLMQuotaExceededError as exc:
-                    llm_available = False
-                    logger.warning(
-                        "LLM quota exceeded; skipping remaining LLM normalization calls for this run"
-                    )
-                    logger.debug(f"Quota error detail: {exc}")
-                    normalized = basic
-                normalized = normalize_description_basic(normalized)
-            else:
-                normalized = basic
-
-            normalized_map[raw] = normalized
-            if NORMALIZATION_CACHE_FIRST:
-                cache[basic] = normalized
-                cache_updated = True
-
-            # logger.info(f"Saved normalization cache to: {NORMALIZATION_CACHE_PATH} ({len(cache)} entries)")
-        if NORMALIZATION_CACHE_FIRST and cache_updated:
-            save_json_file(NORMALIZATION_CACHE_PATH, cache)
-            logger.info(f"Saved normalization cache to: {NORMALIZATION_CACHE_PATH} ({len(cache)} entries)")
-
-        df["Description"] = df["Description"].map(normalized_map).fillna(df["Description"])
+        logger.info("Normalizing descriptions with Python string lowercase...")
+        
+        # Simple normalization: lowercase and strip whitespace
+        df["Description"] = df["Description"].astype(str).str.strip().str.lower()
+        
+        logger.info(f"Normalized {df['Description'].nunique()} unique descriptions")
         return df
 
     def _enrich_categories(self, df: pd.DataFrame) -> pd.DataFrame:
