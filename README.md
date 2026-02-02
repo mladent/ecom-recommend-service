@@ -1,11 +1,11 @@
 # E-Commerce Bundle Recommendation Service
 
-![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Status](https://img.shields.io/badge/status-production--ready-brightgreen.svg)
+![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
+![Status](https://img.shields.io/badge/status-proof--of--concept-yellow.svg)
 ![ML](https://img.shields.io/badge/ML-scikit--learn-orange.svg)
+<!-- ![License](https://img.shields.io/badge/license-MIT-green.svg) -->
 
-A production-ready machine learning service that recommends product bundles to e-commerce customers using Naive Bayes and SVM algorithms with ensemble methods. Features include automated data pipelines, multiple training strategies, and LLM integration capabilities.
+A proof-of-concept machine learning service that recommends product bundles to e-commerce customers using Naive Bayes and SVM algorithms with ensemble methods. Features include automated data pipelines, multiple training strategies, and LLM integration capabilities.
 
 ## ✨ Features
 
@@ -24,7 +24,7 @@ A production-ready machine learning service that recommends product bundles to e
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.12 or higher
 - Kaggle account (for dataset download)
 - 4GB+ RAM recommended
 
@@ -293,9 +293,10 @@ Contributions are welcome! For AI agents working on this codebase, please review
 6. Push to the branch (`git push origin feature/amazing-feature`)
 7. Open a Pull Request
 
+<!-- 
 ## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+ToDo 
+-->
 
 ## 🙏 Acknowledgments
 
