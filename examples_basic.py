@@ -52,7 +52,7 @@ def example_basic_recommendations():
         recs_nb = engine.recommend_bundles(transaction, recommender_name="naive_bayes", threshold=0.3)
         logger.info(f"Naive Bayes Confidence: {recs_nb['confidence']:.2%}")
 
-        recs_svm = engine.recommend_bundles(transaction, recommender_name="svm_rbf", threshold=0.3)
+        recs_svm = engine.recommend_bundles(transaction, recommender_name="svm", threshold=0.3)
         logger.info(f"SVM Confidence: {recs_svm['confidence']:.2%}")
 
 
