@@ -346,10 +346,9 @@ class DataPipeline:
 
         if not ENRICHMENT_ENABLED:
             logger.info("Category enrichment disabled; skipping")
-        if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
-            logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
             return df
 
+        # Load cache first before checking it
         cache = load_json_file(ENRICHMENT_CACHE_PATH) if (ENRICHMENT_CACHE_FIRST and not self.force_reprocess) else {}
         if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
             logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
