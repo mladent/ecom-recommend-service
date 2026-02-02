@@ -89,6 +89,53 @@ def prepare_data(force_reprocess: bool = False):
     return pipeline
 
 
+def regenerate_bundles_only():
+    """Regenerate bundles from preprocessed data only.
+    
+    Reuses cached preprocessed data (processed_data.pkl) and skips all
+    preprocessing steps. Useful for experimenting with different bundle
+    generation parameters (MIN_SUPPORT, MIN_CONFIDENCE, MAX_BUNDLE_SIZE).
+    
+    Returns:
+        DataPipeline: Pipeline with regenerated bundles or None if failed
+    """
+    logger.info("Regenerating bundles from preprocessed data...")
+    
+    if not os.path.exists(PROCESSED_DATA_PATH):
+        logger.error(f"Processed data not found at {PROCESSED_DATA_PATH}")
+        logger.info("Please prepare data first using: python main.py --prepare")
+        return None
+    
+    try:
+        # Load preprocessed data
+        pipeline = DataPipeline(force_reprocess=False)
+        if not pipeline.load_processed_data(PROCESSED_DATA_PATH):
+            logger.error("Failed to load processed data")
+            return None
+        
+        logger.info("Preprocessed data loaded successfully")
+        
+        # Regenerate bundles
+        logger.info("Creating transaction baskets...")
+        pipeline.create_transaction_baskets()
+        
+        logger.info("Generating bundles...")
+        pipeline.generate_product_bundles()
+        
+        logger.info("Saving processed data...")
+        pipeline.save_processed_data()
+        
+        bundle_stats = pipeline.get_bundle_statistics()
+        logger.info(f"Bundle statistics: {bundle_stats}")
+        
+        return pipeline
+        
+    except Exception as e:
+        logger.error(f"Failed to regenerate bundles: {e}")
+        logger.exception(e)
+        return None
+
+
 def train_recommenders(pipeline: DataPipeline):
     """Train recommendation engine."""
     logger.info("Training recommendation engine...")
@@ -258,6 +305,11 @@ def main():
         help="Force reprocessing of data even if cached version exists",
     )
     parser.add_argument(
+        "--bundles-only",
+        action="store_true",
+        help="Regenerate bundles from preprocessed data (skips all preprocessing)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -288,6 +340,11 @@ def main():
 
     if args.prepare or args.full:
         pipeline = prepare_data(force_reprocess=args.reprocess)
+        if not pipeline:
+            return 1
+
+    if args.bundles_only:
+        pipeline = regenerate_bundles_only()
         if not pipeline:
             return 1
 
@@ -333,7 +390,7 @@ def main():
         app.run(host="0.0.0.0", port=port, debug=args.verbose)
         return 0
 
-    if not any([args.download, args.prepare, args.train, args.demo, args.full, args.evaluate_data, args.api]):
+    if not any([args.download, args.prepare, args.train, args.demo, args.full, args.evaluate_data, args.bundles_only, args.api]):
         logger.info("No action specified. Use --help for options.")
         logger.info("Quick start: python main.py --full")
         return 0
