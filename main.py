@@ -375,7 +375,6 @@ def main():
     if args.api:
         logger.info("Launching REST API server...")
         from src.api import app
-        import os
         # Read port from environment variable with fallback to 5000
         port = int(os.getenv("PORT", "5000"))
         logger.info(f"API server starting on http://0.0.0.0:{port}")
