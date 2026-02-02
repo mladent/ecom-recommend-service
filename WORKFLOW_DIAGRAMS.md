@@ -5,7 +5,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    KAGGLE ECOMMERCE DATASET                     │
-│               (https://kaggle.com/carrie1/ecommerce)            │
+│         (https://www.kaggle.com/carrie1/ecommerce-data)         │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ↓
@@ -23,9 +23,9 @@
                     │ .load_raw_data()           │
                     │                            │
                     │ Data Shape:                │
-                    │ • 500K transactions        │
-                    │ • 9 columns                │
-                    │ • Multiple products/trans  │
+                    │ • ≈540K rows               │
+                    │ • 8 columns                │
+                    │ • Multiple products/invoice│
                     └────────┬───────────────────┘
                              │
                              ↓
@@ -63,8 +63,8 @@
           │ Group items by InvoiceNo       │
           │ Filter baskets: size >= 2      │
           │                                │
-          │ Output: 200K+ baskets          │
-          │ Average: 3.5 items/basket      │
+          │ Output: varies by filters      │
+          │ Average: depends on data       │
           └────────┬─────────────────────┘
                    │
                    ↓
@@ -83,8 +83,8 @@
          │ 3. Generate k-itemsets           │
          │ 4. Filter by confidence          │
          │                                  │
-         │ Output: 5K-10K bundles           │
-         │ Avg size: 2.3 products           │
+         │ Output: varies by thresholds     │
+         │ Avg size: depends on params      │
          └────────┬──────────────────────┘
                   │
                   ↓
@@ -106,11 +106,11 @@
      ┌────────────────────────────────┐
      │ READY FOR MODEL TRAINING       │
      │                                │
-     │ Data statistics:               │
-     │ • Clean transactions: 450K+    │
-     │ • Usable baskets: 200K+        │
-     │ • Frequent items: 1K+          │
-     │ • Product bundles: 5K-10K      │
+      │ Data statistics:               │
+      │ • Clean transactions: varies   │
+      │ • Usable baskets: varies       │
+      │ • Frequent items: varies       │
+      │ • Product bundles: varies      │
      └────────────────────────────────┘
 ```
 
@@ -166,19 +166,17 @@
        └─────────┬───────────┴─────────────────────┘
                  │
                  ↓
-        ┌────────────────────────────────┐
-        │ TRAIN-TEST SPLIT               │
-        │                                │
-        │ • Split ratio: 0.8/0.2         │
-        │ • Random state: 42             │
-        │ • Stratified: No               │
-        │                                │
-        │ Output:                        │
-        │ • X_train (80%)                │
-        │ • X_test (20%)                 │
-        │ • y_train                      │
-        │ • y_test                       │
-        └────────┬─────────────────────┘
+      ┌────────────────────────────────┐
+      │ DATA SPLITTING (BEFORE TRAINING)│
+      │                                │
+      │ • RandomSplit (0.8/0.2)        │
+      │ • K-Fold (k=10)                │
+      │ • Random state: 42             │
+      │                                │
+      │ Output:                        │
+      │ • Train/test splits per fold   │
+      │ • X_train, X_test, y_train, y_test
+      └────────┬─────────────────────┘
                  │
                  ↓
         ┌────────────────────────────────┐
@@ -356,7 +354,7 @@
 ```
                     ┌─────────────────────────────────┐
                     │   APPLICATION LAYER             │
-                    │  (Future: REST API, Web UI)     │
+                    │  (REST API, Web UI)            │
                     └──────────────┬────────────────┘
                                    │
           ┌────────────────────────┴────────────────────────┐
