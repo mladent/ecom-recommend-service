@@ -81,6 +81,7 @@ print(f"Confidence: {recs['confidence']:.2%}")
 | [examples_comparison.py](examples_comparison.py) | Compare Naive Bayes vs SVM vs Ensemble | `python examples_comparison.py` |
 | [examples_kfold_validation.py](examples_kfold_validation.py) | K-fold cross-validation for robust metrics | `python examples_kfold_validation.py` |
 | [examples_category_enrichment.py](examples_category_enrichment.py) | LLM-powered category enrichment | `python examples_category_enrichment.py` |
+| [examples_batch_enrichment.py](examples_batch_enrichment.py) | Batch processing for optimized LLM enrichment | `python examples_batch_enrichment.py` |
 
 ## 🏗️ Project Structure
 
