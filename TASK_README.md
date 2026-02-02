@@ -2,13 +2,14 @@
 
 **IMPORTANT NOTE**
 
- *The project is not fully tested* with the LLM-based solutions are very slow, although optimised for batch processing, they still lack parallelised API calls.
+*The project is not fully tested.* LLM-based solutions are very slow; although optimised for batch processing, they still lack parallelised API calls.
 
 There are two preloaded datasets to use:
- - data_full.csv; the fill Kaggle dataset
- - data_minimum.csv; 10% of the Kaggle dataset
+- data_full.csv; the full Kaggle dataset
+- data_minimum.csv; 10% of the Kaggle dataset
 
- ***copy the data_minimum.csv to data.csv for testing the LLMs API processing***
+***For LLM API testing, copy data_minimum.csv to data.csv:***
+`cp data_minimum.csv data.csv`
 
 ## Task 1
 
@@ -22,19 +23,19 @@ Please describe any reasoning behind your solution.
 - A pluggable ML engine `src.recommendation_engine.BundleRecommendationEngine` that can host multiple recommenders and produce bundle recommendations via a single interface.
 - Two concrete models:
   - [`src.recommendation_engine.NaiveBayesBundleRecommender`](src/recommendation_engine.py) for fast, sparse, high‑dimensional binary features using `MultiLabelBinarizer`.
-  - `src.recommendation_engine.SVMBundleRecommender` for a stronger decision boundary with configurable kernel and scaling.
+  - `src.recommendation_engine.SVMBundleRecommender` for improved separation with configurable kernel and scaling.
 - An ensemble mode in `src.recommendation_engine.BundleRecommendationEngine` that averages model probabilities to reduce variance and improve robustness across different transaction patterns.
 
 ### Reasoning behind the solution:
 
 - **Sparse transaction data fits NB/SVM well.**  
   - Transactions are naturally multi‑hot feature vectors; `MultiLabelBinarizer` makes them suitable for classical ML classifiers, which is efficient and reliable for moderate datasets. 
-  - This is implemented directly in `src.recommendation_engine.NaiveBayesBundleRecommender` and `src.recommendation_engine.SVMBundleRecommender`[](src/recommendation_engine.py).
+  - This is implemented directly in `src.recommendation_engine.NaiveBayesBundleRecommender` and `src.recommendation_engine.SVMBundleRecommender` in `src/recommendation_engine.py`.
 - **Binary bundle label simplifies training.**  
    - Each transaction is labeled positive if it contains any known bundle. 
    - This reduces complexity and lets models learn “bundle likelihood” from item co‑occurrence rather than a large multi‑label target space.
 - **Complementary model strengths.**  
-  - Naive Bayes is fast and works well with high‑dimensional sparse data, while SVM can capture more complex decision boundaries; ideally with a non-linear kernels. 
+  - Naive Bayes is fast and works well with high‑dimensional sparse data, while SVM can capture more complex decision boundaries (especially with non‑linear kernels). 
   - This combination is exposed through the engine’s `ensemble` path in `src.recommendation_engine.BundleRecommendationEngine`.
 - **Operational simplicity.**  
   - The engine exposes `fit_all()` and `recommend_bundles()` so new models can be added without changing callers. 
@@ -78,10 +79,10 @@ criteria. What other splitting criteria would you choose if you had access to ri
 features (e.g., seasonality flags, user demographics) or larger historical datasets.
 ``` -->
 
-Current implemented splitting in code is random train/test and k‑fold CV via `src.data_splitter.RandomSplit` and  `src.data_splitter.KFoldSplit`. 
+Current implemented splitting in code is random train/test and k‑fold CV via `src.data_splitter.RandomSplit` and `src.data_splitter.KFoldSplit`. 
 Those work when samples are independent and identically distributed (i.i.d.) and you want a fast, general estimate of model performance.
 
-Because the dataset  is expanded in preprocessing (normalized descriptions and added enriched attributes with categories), 
+Because the dataset is expanded in preprocessing (normalized descriptions and added enriched attributes with categories), 
 it partially simulates a richer dataset.
 
 Alternative split criteria (with richer features or larger history):
@@ -136,61 +137,53 @@ or generate suitable alternatives and provide a working implementation.
 ``` -->
 
 
-The LLM is invoked after bundle selection in `src.recommendation_engine.BundleRecommendationEngine.recommend_bundles.` 
+This is implemented by the same OOS substitution flow described in **Task 2**. In short, the LLM is invoked after bundle selection in `BundleRecommendationEngine.recommend_bundles()` to replace missing items with in‑stock alternatives, and it returns a `bundle_substitutions` audit trail.
 
-For each out‑of‑stock item, it:
+## Task 6
 
-  - Builds a candidate set of in‑stock items and a cache key.
-  - Calls src.utils.select_alternatives_with_llm with the missing item, candidates, provider/model settings, and limits.
-  - Chooses the highest‑score alternative that meets the configured minimum score and substitutes it into the bundle.
-  - Falls back to a heuristic alternative if the LLM is unavailable or returns nothing.
-
-The output is integrated by replacing missing items inside bundles and adding a `bundle_substitutions `audit trail in the recommendation response.
-
-## Task 6 
-
- **Improving the Solution with Additional Data**
+**Improving the Solution with Additional Data**
 
 
 The current system uses transaction history only. 
 
-### The following data might prove beneficial 
+### The following data might prove beneficial
 
->| Data Source						| Business Value										
-  | --											| --																
-  | Customer Demographics	| Segment-specific bundles, fairness			
-  | Product Metadata				| Category, price, seasonality, brand					
-  | Temporal Features				| Seasonality, trend detection, drift						
-  | Inventory Data					| Real-time OOS handling, substitution			
-  | Customer Behavior			| RFM scores, churn risk, lifetime value; grouping by similarity
-  | Reviews/Feedback			| Quality signals, sentiment, product fit			
-  | Website Behavior				| Click-through, dwell time, cart abandonment	
-  | Geographic/Regional			| Regional preferences, shipping costs				
-  | Competitor Pricing				| Price elasticity, discount sensitivity					
-  | Supply Chain						| Lead times, supplier quality, restock timing		
-  | Social Media						| Collect information on current trends
+| Data Source | Business Value |
+| -- | -- |
+| Customer Demographics | Segment-specific bundles, fairness |
+| Product Metadata | Category, price, seasonality, brand |
+| Temporal Features | Seasonality, trend detection, drift |
+| Inventory Data | Real-time OOS handling, substitution |
+| Customer Behavior | RFM scores, churn risk, lifetime value; grouping by similarity |
+| Reviews/Feedback | Quality signals, sentiment, product fit |
+| Website Behavior | Click-through, dwell time, cart abandonment |
+| Geographic/Regional | Regional preferences, shipping costs |
+| Competitor Pricing | Price elasticity, discount sensitivity |
+| Supply Chain | Lead times, supplier quality, restock timing |
+| Social Media | Collect information on current trends |
 
 ### Data Gathering & Preprocessing Architecture
 
 
 
-  | Raw Data Sources		| Gathering method
-  | Transaction History (web-store DB) 	| DB access
-  | Customer Demographics (CRM) 		| DB access
-  | Product Catalog (ERP)				| DB access
-  | Inventory (WMS) 						| DB access
-  | Website Logs (Analytics) 			| DB access
-  | Social Media								| web crawling,  public and pay-for-access DBs
+| Raw Data Sources | Gathering method |
+| -- | -- |
+| Transaction History (web-store DB) | DB access |
+| Customer Demographics (CRM) | DB access |
+| Product Catalog (ERP) | DB access |
+| Inventory (WMS) | DB access |
+| Website Logs (Analytics) | DB access |
+| Social Media | Web crawling, public and pay‑for‑access DBs |
 
 ### Key Improvements to Expect
 
- | Metric											| Current		| Wth Add. Data	| Mechanism
- | --											| --		| --	| --
- | Bundle Attach Rate						| Baseline	| +8-15%				| Personalization by segment
- | AOV (Avg Order Value)				| Baseline	| +5-12%				| Premium bundles for VIPs
- | Conversion									| Baseline	| +3-7%				| Seasonality-aware timing
- | OOS Substitution Accept Rate	| ~60%		| ~85%				| LLM leverages richer product context
- | Model Retraining Frequency		| Monthly		| Weekly				| Faster drift detection via RFM/seasonality
- | Fairness (by segment)				| Unknown	| Measurable		| Demographic parity metrics
+| Metric | Current | With Add. Data | Mechanism |
+| -- | -- | -- | -- |
+| Bundle Attach Rate | Baseline | +8–15% | Personalization by segment |
+| AOV (Avg Order Value) | Baseline | +5–12% | Premium bundles for VIPs |
+| Conversion | Baseline | +3–7% | Seasonality-aware timing |
+| OOS Substitution Accept Rate | ~60% | ~85% | LLM leverages richer product context |
+| Model Retraining Frequency | Monthly | Weekly | Faster drift detection via RFM/seasonality |
+| Fairness (by segment) | Unknown | Measurable | Demographic parity metrics |
 
  This roadmap keeps your existing architecture while scaling it to production-grade personalization.
