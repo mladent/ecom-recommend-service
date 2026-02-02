@@ -40,6 +40,7 @@ from src.config import (
     ENRICHMENT_ENABLED,
     ENRICHMENT_CACHE_FIRST,
     ENRICHMENT_CACHE_PATH,
+    ENRICHMENT_BATCH_SIZE,
     ENRICHMENT_FIELDS,
     OUTLIER_ENABLED,
     OUTLIER_CACHE_FIRST,
@@ -58,6 +59,7 @@ from src.utils import (
     normalize_description_basic,
     normalize_description_with_llm,
     enrich_categories_with_llm,
+    enrich_categories_batch_with_llm,
     extract_contexts_with_llm,
     compute_iqr_bounds,
     batch_score_anomalies_with_llm,
@@ -352,9 +354,6 @@ class DataPipeline:
         cache = load_json_file(ENRICHMENT_CACHE_PATH) if (ENRICHMENT_CACHE_FIRST and not self.force_reprocess) else {}
         if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
             logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
-        cache_updated = False
-        cache_hits = 0
-        cache_misses = 0
 
         provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
         llm_available = True
@@ -383,62 +382,72 @@ class DataPipeline:
         unique_descriptions = df["Description"].dropna().astype(str).unique()
         enrichment_map: Dict[str, Dict[str, str]] = {}
 
-        logger.info(f"Enriching {len(unique_descriptions)} unique descriptions with {len(ENRICHMENT_FIELDS)} fields")
+        logger.info(f"Enriching {len(unique_descriptions)} unique descriptions with {len(ENRICHMENT_FIELDS)} fields (batch_size={ENRICHMENT_BATCH_SIZE})")
 
+        # Separate cached and uncached descriptions
+        descriptions_to_enrich = []
+        cache_hits = 0
+        
         for desc in unique_descriptions:
-            # Use description as cache key
-            cache_key = desc
-
-            if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache_key in cache:
-                enrichment_map[desc] = cache[cache_key]
+            if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and desc in cache:
+                enrichment_map[desc] = cache[desc]
                 cache_hits += 1
-                continue
-
-            if llm_available:
-                try:
-                    enriched = enrich_categories_with_llm(
-                        text=desc,
-                        fields=ENRICHMENT_FIELDS,
-                        provider=provider,
-                        model=LLM_MODEL,
-                        temperature=LLM_TEMPERATURE,
-                        max_tokens=LLM_MAX_TOKENS,
-                        timeout_seconds=LLM_TIMEOUT_SECONDS,
-                        api_key=(
-                            OPENAI_API_KEY
-                            if provider == "openai"
-                            else AZURE_OPENAI_API_KEY
-                            if provider == "azure"
-                            else GEMINI_API_KEY
-                            if provider == "gemini"
-                            else ANTHROPIC_API_KEY
-                            if provider == "anthropic"
-                            else PERPLEXITY_API_KEY
-                        ),
-                        endpoint=AZURE_OPENAI_ENDPOINT,
-                        deployment=AZURE_OPENAI_DEPLOYMENT,
-                        api_version=AZURE_OPENAI_API_VERSION,
-                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
-                    )
-                    cache_misses += 1
-                except LLMQuotaExceededError as exc:
-                    llm_available = False
-                    logger.warning(
-                        "LLM quota exceeded; skipping remaining category enrichment calls for this run"
-                    )
-                    logger.debug(f"Quota error detail: {exc}")
-                    enriched = {field: "NaN" for field in ENRICHMENT_FIELDS}
             else:
-                enriched = {field: "NaN" for field in ENRICHMENT_FIELDS}
+                descriptions_to_enrich.append(desc)
 
-            enrichment_map[desc] = enriched
-            if ENRICHMENT_CACHE_FIRST:
-                cache[cache_key] = enriched
-                cache_updated = True
+        cache_misses = len(descriptions_to_enrich)
+        logger.info(f"Cache hits: {cache_hits}, Cache misses: {cache_misses}")
 
-        if ENRICHMENT_CACHE_FIRST and cache_updated:
-            save_json_file(ENRICHMENT_CACHE_PATH, cache)
-            logger.info(f"Saved enrichment cache to: {ENRICHMENT_CACHE_PATH} ({cache_hits} hits, {cache_misses} misses)")
+        # Process uncached descriptions using batch processing
+        if descriptions_to_enrich and llm_available:
+            try:
+                batch_results = enrich_categories_batch_with_llm(
+                    texts=descriptions_to_enrich,
+                    fields=ENRICHMENT_FIELDS,
+                    provider=provider,
+                    model=LLM_MODEL,
+                    temperature=LLM_TEMPERATURE,
+                    max_tokens=LLM_MAX_TOKENS,
+                    timeout_seconds=LLM_TIMEOUT_SECONDS,
+                    batch_size=ENRICHMENT_BATCH_SIZE,
+                    api_key=(
+                        OPENAI_API_KEY
+                        if provider == "openai"
+                        else AZURE_OPENAI_API_KEY
+                        if provider == "azure"
+                        else GEMINI_API_KEY
+                        if provider == "gemini"
+                        else ANTHROPIC_API_KEY
+                        if provider == "anthropic"
+                        else PERPLEXITY_API_KEY
+                    ),
+                    endpoint=AZURE_OPENAI_ENDPOINT,
+                    deployment=AZURE_OPENAI_DEPLOYMENT,
+                    api_version=AZURE_OPENAI_API_VERSION,
+                    base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                )
+                enrichment_map.update(batch_results)
+                
+                # Update cache with new results
+                if ENRICHMENT_CACHE_FIRST:
+                    for desc, enriched in batch_results.items():
+                        cache[desc] = enriched
+                    save_json_file(ENRICHMENT_CACHE_PATH, cache)
+                    logger.info(f"Saved enrichment cache to: {ENRICHMENT_CACHE_PATH} ({len(cache)} total entries)")
+                    
+            except LLMQuotaExceededError as exc:
+                logger.warning(
+                    "LLM quota exceeded during batch enrichment; filling remaining with NaN"
+                )
+                logger.debug(f"Quota error detail: {exc}")
+                # Fill remaining descriptions with NaN
+                for desc in descriptions_to_enrich:
+                    if desc not in enrichment_map:
+                        enrichment_map[desc] = {field: "NaN" for field in ENRICHMENT_FIELDS}
+        elif descriptions_to_enrich:
+            # LLM not available, fill with NaN
+            for desc in descriptions_to_enrich:
+                enrichment_map[desc] = {field: "NaN" for field in ENRICHMENT_FIELDS}
 
         # Add enrichment columns to dataframe
         for field in ENRICHMENT_FIELDS:
