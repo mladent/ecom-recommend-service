@@ -51,7 +51,7 @@ def example_model_comparison():
             transaction, recommender_name="naive_bayes", threshold=0.0
         )
         rec_svm = engine.recommend_bundles(
-            transaction, recommender_name="svm_rbf", threshold=0.0
+            transaction, recommender_name="svm", threshold=0.0
         )
         rec_ensemble = engine.recommend_bundles(
             transaction, threshold=0.0
@@ -61,13 +61,13 @@ def example_model_comparison():
             {
                 "Transaction": ", ".join(transaction),
                 "Naive_Bayes": f"{rec_nb['confidence']:.2%}",
-                "SVM_RBF": f"{rec_svm['confidence']:.2%}",
+                "SVM": f"{rec_svm['confidence']:.2%}",
                 "Ensemble": f"{rec_ensemble['confidence']:.2%}",
             }
         )
 
         logger.info(f"  Naive Bayes Confidence:  {rec_nb['confidence']:.2%}")
-        logger.info(f"  SVM RBF Confidence:      {rec_svm['confidence']:.2%}")
+        logger.info(f"  SVM Confidence:          {rec_svm['confidence']:.2%}")
         logger.info(f"  Ensemble Confidence:     {rec_ensemble['confidence']:.2%}")
 
     # Display comparison table
