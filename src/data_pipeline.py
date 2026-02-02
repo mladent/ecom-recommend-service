@@ -1023,7 +1023,7 @@ class DataPipeline:
         Returns:
             dict: Bundle statistics
         """
-        if self.bundles is None:
+        if self.bundles is None or len(self.bundles) == 0:
             return {}
 
         bundle_sizes = [len(bundle) for bundle in self.bundles]
