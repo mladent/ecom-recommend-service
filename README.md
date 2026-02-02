@@ -1,5 +1,7 @@
 # E-Commerce Bundle Recommendation Service
 
+> ✨ **This project was vibecoded** — Built with AI assistance for rapid prototyping and exploration
+
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 ![Status](https://img.shields.io/badge/status-proof--of--concept-yellow.svg)
 ![ML](https://img.shields.io/badge/ML-scikit--learn-orange.svg)
