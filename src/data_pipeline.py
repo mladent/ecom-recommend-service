@@ -40,6 +40,7 @@ from src.config import (
     ENRICHMENT_ENABLED,
     ENRICHMENT_CACHE_FIRST,
     ENRICHMENT_CACHE_PATH,
+    ENRICHMENT_BATCH_SIZE,
     ENRICHMENT_FIELDS,
     OUTLIER_ENABLED,
     OUTLIER_CACHE_FIRST,
@@ -58,6 +59,7 @@ from src.utils import (
     normalize_description_basic,
     normalize_description_with_llm,
     enrich_categories_with_llm,
+    enrich_categories_batch_with_llm,
     extract_contexts_with_llm,
     compute_iqr_bounds,
     batch_score_anomalies_with_llm,
@@ -346,16 +348,12 @@ class DataPipeline:
 
         if not ENRICHMENT_ENABLED:
             logger.info("Category enrichment disabled; skipping")
-        if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
-            logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
             return df
 
+        # Load cache first before checking it
         cache = load_json_file(ENRICHMENT_CACHE_PATH) if (ENRICHMENT_CACHE_FIRST and not self.force_reprocess) else {}
         if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
             logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
-        cache_updated = False
-        cache_hits = 0
-        cache_misses = 0
 
         provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
         llm_available = True
@@ -384,62 +382,72 @@ class DataPipeline:
         unique_descriptions = df["Description"].dropna().astype(str).unique()
         enrichment_map: Dict[str, Dict[str, str]] = {}
 
-        logger.info(f"Enriching {len(unique_descriptions)} unique descriptions with {len(ENRICHMENT_FIELDS)} fields")
+        logger.info(f"Enriching {len(unique_descriptions)} unique descriptions with {len(ENRICHMENT_FIELDS)} fields (batch_size={ENRICHMENT_BATCH_SIZE})")
 
+        # Separate cached and uncached descriptions
+        descriptions_to_enrich = []
+        cache_hits = 0
+        
         for desc in unique_descriptions:
-            # Use description as cache key
-            cache_key = desc
-
-            if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache_key in cache:
-                enrichment_map[desc] = cache[cache_key]
+            if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and desc in cache:
+                enrichment_map[desc] = cache[desc]
                 cache_hits += 1
-                continue
-
-            if llm_available:
-                try:
-                    enriched = enrich_categories_with_llm(
-                        text=desc,
-                        fields=ENRICHMENT_FIELDS,
-                        provider=provider,
-                        model=LLM_MODEL,
-                        temperature=LLM_TEMPERATURE,
-                        max_tokens=LLM_MAX_TOKENS,
-                        timeout_seconds=LLM_TIMEOUT_SECONDS,
-                        api_key=(
-                            OPENAI_API_KEY
-                            if provider == "openai"
-                            else AZURE_OPENAI_API_KEY
-                            if provider == "azure"
-                            else GEMINI_API_KEY
-                            if provider == "gemini"
-                            else ANTHROPIC_API_KEY
-                            if provider == "anthropic"
-                            else PERPLEXITY_API_KEY
-                        ),
-                        endpoint=AZURE_OPENAI_ENDPOINT,
-                        deployment=AZURE_OPENAI_DEPLOYMENT,
-                        api_version=AZURE_OPENAI_API_VERSION,
-                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
-                    )
-                    cache_misses += 1
-                except LLMQuotaExceededError as exc:
-                    llm_available = False
-                    logger.warning(
-                        "LLM quota exceeded; skipping remaining category enrichment calls for this run"
-                    )
-                    logger.debug(f"Quota error detail: {exc}")
-                    enriched = {field: "NaN" for field in ENRICHMENT_FIELDS}
             else:
-                enriched = {field: "NaN" for field in ENRICHMENT_FIELDS}
+                descriptions_to_enrich.append(desc)
 
-            enrichment_map[desc] = enriched
-            if ENRICHMENT_CACHE_FIRST:
-                cache[cache_key] = enriched
-                cache_updated = True
+        cache_misses = len(descriptions_to_enrich)
+        logger.info(f"Cache hits: {cache_hits}, Cache misses: {cache_misses}")
 
-        if ENRICHMENT_CACHE_FIRST and cache_updated:
-            save_json_file(ENRICHMENT_CACHE_PATH, cache)
-            logger.info(f"Saved enrichment cache to: {ENRICHMENT_CACHE_PATH} ({cache_hits} hits, {cache_misses} misses)")
+        # Process uncached descriptions using batch processing
+        if descriptions_to_enrich and llm_available:
+            try:
+                batch_results = enrich_categories_batch_with_llm(
+                    texts=descriptions_to_enrich,
+                    fields=ENRICHMENT_FIELDS,
+                    provider=provider,
+                    model=LLM_MODEL,
+                    temperature=LLM_TEMPERATURE,
+                    max_tokens=LLM_MAX_TOKENS,
+                    timeout_seconds=LLM_TIMEOUT_SECONDS,
+                    batch_size=ENRICHMENT_BATCH_SIZE,
+                    api_key=(
+                        OPENAI_API_KEY
+                        if provider == "openai"
+                        else AZURE_OPENAI_API_KEY
+                        if provider == "azure"
+                        else GEMINI_API_KEY
+                        if provider == "gemini"
+                        else ANTHROPIC_API_KEY
+                        if provider == "anthropic"
+                        else PERPLEXITY_API_KEY
+                    ),
+                    endpoint=AZURE_OPENAI_ENDPOINT,
+                    deployment=AZURE_OPENAI_DEPLOYMENT,
+                    api_version=AZURE_OPENAI_API_VERSION,
+                    base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                )
+                enrichment_map.update(batch_results)
+                
+                # Update cache with new results
+                if ENRICHMENT_CACHE_FIRST:
+                    for desc, enriched in batch_results.items():
+                        cache[desc] = enriched
+                    save_json_file(ENRICHMENT_CACHE_PATH, cache)
+                    logger.info(f"Saved enrichment cache to: {ENRICHMENT_CACHE_PATH} ({len(cache)} total entries)")
+                    
+            except LLMQuotaExceededError as exc:
+                logger.warning(
+                    "LLM quota exceeded during batch enrichment; filling remaining with NaN"
+                )
+                logger.debug(f"Quota error detail: {exc}")
+                # Fill remaining descriptions with NaN
+                for desc in descriptions_to_enrich:
+                    if desc not in enrichment_map:
+                        enrichment_map[desc] = {field: "NaN" for field in ENRICHMENT_FIELDS}
+        elif descriptions_to_enrich:
+            # LLM not available, fill with NaN
+            for desc in descriptions_to_enrich:
+                enrichment_map[desc] = {field: "NaN" for field in ENRICHMENT_FIELDS}
 
         # Add enrichment columns to dataframe
         for field in ENRICHMENT_FIELDS:
@@ -912,37 +920,59 @@ class DataPipeline:
         current_itemsets = [[item] for item in frequent_items.keys()]
 
         for size in range(2, max_size + 1):
-            # Generate candidate itemsets
+            # Generate candidate itemsets using Apriori principle
             candidates_set = set()
-            for i in range(len(current_itemsets)):
-                for j in range(i + 1, len(current_itemsets)):
-                    union = sorted(list(set(current_itemsets[i]) | set(current_itemsets[j])))
-                    if len(union) == size:
-                        candidates_set.add(tuple(union))
+            
+            if size == 2:
+                # For size 2, generate ALL pairs of frequent items
+                frequent_items_list = sorted(list(frequent_items.keys()))
+                for i in range(len(frequent_items_list)):
+                    for j in range(i + 1, len(frequent_items_list)):
+                        candidate = tuple(sorted([frequent_items_list[i], frequent_items_list[j]]))
+                        candidates_set.add(candidate)
+                logger.info(f"Generated {len(candidates_set)} candidate pairs (size 2) from {len(frequent_items_list)} frequent items")
+            else:
+                # For size > 2, use Apriori principle: combine itemsets that share k-1 items
+                for i in range(len(current_itemsets)):
+                    for j in range(i + 1, len(current_itemsets)):
+                        itemset_i = sorted(current_itemsets[i])
+                        itemset_j = sorted(current_itemsets[j])
+                        
+                        # Check if first k-1 items are identical (Apriori pruning)
+                        if itemset_i[:-1] == itemset_j[:-1]:
+                            union = tuple(sorted(list(set(itemset_i) | set(itemset_j))))
+                            if len(union) == size:
+                                candidates_set.add(union)
+                
+                if candidates_set:
+                    logger.info(f"Generated {len(candidates_set)} candidate itemsets of size {size} using Apriori principle")
 
             if not candidates_set:
+                logger.info(f"No candidates generated for size {size}. Stopping bundle generation.")
                 break
-
-            logger.info(f"Created candidates_set with {len(candidates_set)} candidates of size {size}")
 
             # Vectorized support calculation using matrix operations
             valid_itemsets = []
+            valid_count = 0
             for candidate in candidates_set:
                 # Get column indices for items in candidate
                 col_indices = [item_to_idx[item] for item in candidate]
                 # Calculate support: count transactions where ALL items are present
                 support = np.sum(np.all(transaction_matrix[:, col_indices], axis=1))
+                support_pct = support / total_transactions if total_transactions > 0 else 0
                 
                 if support >= support_threshold:
                     valid_itemsets.append(tuple(candidate))
                     bundles.append(tuple(candidate))
+                    valid_count += 1
 
+            logger.info(f"Found {valid_count} frequent itemsets of size {size} (support >= {min_support:.4f})")
+            
             current_itemsets = [list(itemset) for itemset in valid_itemsets]
 
             if not current_itemsets:
+                logger.info(f"No frequent itemsets of size {size}. Stopping bundle generation.")
                 break
-
-            logger.info(f"Generated {len(valid_itemsets)} bundles of size {size}")
 
         self.bundles = bundles
         logger.info(f"Total bundles generated: {len(bundles)}")
@@ -1015,7 +1045,7 @@ class DataPipeline:
         Returns:
             dict: Bundle statistics
         """
-        if self.bundles is None:
+        if self.bundles is None or len(self.bundles) == 0:
             return {}
 
         bundle_sizes = [len(bundle) for bundle in self.bundles]
