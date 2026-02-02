@@ -283,6 +283,10 @@ python main.py --demo            # Run demonstration
 # Start REST API server
 python main.py --api
 
+# Open web UI
+open http://localhost:5000
+
+
 # Force reprocessing (ignore cache)
 python main.py --prepare --reprocess
 
