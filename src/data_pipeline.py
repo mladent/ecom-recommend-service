@@ -920,37 +920,59 @@ class DataPipeline:
         current_itemsets = [[item] for item in frequent_items.keys()]
 
         for size in range(2, max_size + 1):
-            # Generate candidate itemsets
+            # Generate candidate itemsets using Apriori principle
             candidates_set = set()
-            for i in range(len(current_itemsets)):
-                for j in range(i + 1, len(current_itemsets)):
-                    union = sorted(list(set(current_itemsets[i]) | set(current_itemsets[j])))
-                    if len(union) == size:
-                        candidates_set.add(tuple(union))
+            
+            if size == 2:
+                # For size 2, generate ALL pairs of frequent items
+                frequent_items_list = sorted(list(frequent_items.keys()))
+                for i in range(len(frequent_items_list)):
+                    for j in range(i + 1, len(frequent_items_list)):
+                        candidate = tuple(sorted([frequent_items_list[i], frequent_items_list[j]]))
+                        candidates_set.add(candidate)
+                logger.info(f"Generated {len(candidates_set)} candidate pairs (size 2) from {len(frequent_items_list)} frequent items")
+            else:
+                # For size > 2, use Apriori principle: combine itemsets that share k-1 items
+                for i in range(len(current_itemsets)):
+                    for j in range(i + 1, len(current_itemsets)):
+                        itemset_i = sorted(current_itemsets[i])
+                        itemset_j = sorted(current_itemsets[j])
+                        
+                        # Check if first k-1 items are identical (Apriori pruning)
+                        if itemset_i[:-1] == itemset_j[:-1]:
+                            union = tuple(sorted(list(set(itemset_i) | set(itemset_j))))
+                            if len(union) == size:
+                                candidates_set.add(union)
+                
+                if candidates_set:
+                    logger.info(f"Generated {len(candidates_set)} candidate itemsets of size {size} using Apriori principle")
 
             if not candidates_set:
+                logger.info(f"No candidates generated for size {size}. Stopping bundle generation.")
                 break
-
-            logger.info(f"Created candidates_set with {len(candidates_set)} candidates of size {size}")
 
             # Vectorized support calculation using matrix operations
             valid_itemsets = []
+            valid_count = 0
             for candidate in candidates_set:
                 # Get column indices for items in candidate
                 col_indices = [item_to_idx[item] for item in candidate]
                 # Calculate support: count transactions where ALL items are present
                 support = np.sum(np.all(transaction_matrix[:, col_indices], axis=1))
+                support_pct = support / total_transactions if total_transactions > 0 else 0
                 
                 if support >= support_threshold:
                     valid_itemsets.append(tuple(candidate))
                     bundles.append(tuple(candidate))
+                    valid_count += 1
 
+            logger.info(f"Found {valid_count} frequent itemsets of size {size} (support >= {min_support:.4f})")
+            
             current_itemsets = [list(itemset) for itemset in valid_itemsets]
 
             if not current_itemsets:
+                logger.info(f"No frequent itemsets of size {size}. Stopping bundle generation.")
                 break
-
-            logger.info(f"Generated {len(valid_itemsets)} bundles of size {size}")
 
         self.bundles = bundles
         logger.info(f"Total bundles generated: {len(bundles)}")
