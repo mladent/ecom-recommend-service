@@ -498,6 +498,102 @@ def enrich_categories_with_llm(
 
 def compute_iqr_bounds(series, multiplier: float = 1.5) -> Tuple[float, float]:
     """Compute IQR-based lower and upper bounds for a numeric series."""
+
+
+def enrich_categories_batch_with_llm(
+    texts: List[str],
+    fields: List[str],
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    timeout_seconds: int,
+    batch_size: int = 10,
+    api_key: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    deployment: Optional[str] = None,
+    api_version: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> Dict[str, Dict[str, str]]:
+    """
+    Extract category attributes from multiple product descriptions using batch processing.
+    
+    Submits multiple enrichment requests in batches to optimize LLM API usage.
+    
+    Args:
+        texts: List of product descriptions to enrich
+        fields: List of fields to extract (e.g., ['category', 'material', 'size', 'theme'])
+        provider: LLM provider name
+        model: Model identifier
+        temperature: Generation temperature
+        max_tokens: Max tokens for response
+        timeout_seconds: Request timeout
+        batch_size: Number of descriptions to process per batch
+        api_key: API key for the provider
+        endpoint: API endpoint (Azure)
+        deployment: Deployment name (Azure)
+        api_version: API version (Azure)
+        base_url: Base URL (OpenAI, Perplexity)
+    
+    Returns:
+        Dict mapping descriptions to their enrichment results (field -> value mapping)
+    """
+    results: Dict[str, Dict[str, str]] = {}
+    
+    if not texts:
+        return results
+    
+    # Remove duplicates while preserving order
+    unique_texts = []
+    seen = set()
+    for text in texts:
+        if text not in seen:
+            unique_texts.append(text)
+            seen.add(text)
+    
+    total = len(unique_texts)
+    logger.info(f"Processing {total} unique descriptions in batches of {batch_size}")
+    
+    # Process in batches
+    for batch_idx in range(0, total, batch_size):
+        batch = unique_texts[batch_idx : batch_idx + batch_size]
+        batch_num = batch_idx // batch_size + 1
+        total_batches = (total + batch_size - 1) // batch_size
+        logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} items)")
+        
+        # Enrich each item in the batch
+        for text in batch:
+            try:
+                enriched = enrich_categories_with_llm(
+                    text=text,
+                    fields=fields,
+                    provider=provider,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout_seconds=timeout_seconds,
+                    api_key=api_key,
+                    endpoint=endpoint,
+                    deployment=deployment,
+                    api_version=api_version,
+                    base_url=base_url,
+                )
+                results[text] = enriched
+            except LLMQuotaExceededError:
+                logger.warning("LLM quota exceeded during batch processing")
+                # Set remaining items to NaN
+                for remaining_text in unique_texts[batch_idx + len(results) :]:
+                    results[remaining_text] = {field: "NaN" for field in fields}
+                raise
+            except Exception as exc:
+                logger.warning(f"Failed to enrich '{text[:50]}': {exc}")
+                results[text] = {field: "NaN" for field in fields}
+    
+    return results
+
+
+def compute_iqr_bounds(series, multiplier: float = 1.5) -> Tuple[float, float]:
+    """Compute IQR-based lower and upper bounds for a numeric series."""
     clean = series.dropna()
     if clean.empty:
         return float("-inf"), float("inf")

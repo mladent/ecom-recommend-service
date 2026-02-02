@@ -102,6 +102,7 @@ ENRICHMENT_CACHE_FIRST = _env_bool("LLM_CATEGORY_CACHE_FIRST", ENRICHMENT_CONFIG
 ENRICHMENT_CACHE_PATH = _resolve_path(
     os.getenv("LLM_CATEGORY_CACHE_PATH", ENRICHMENT_CONFIG.get("cache_path", "data/category_enrichment_cache.json"))
 )
+ENRICHMENT_BATCH_SIZE = int(os.getenv("LLM_CATEGORY_BATCH_SIZE", ENRICHMENT_CONFIG.get("batch_size", 10)))
 ENRICHMENT_FIELDS = ENRICHMENT_CONFIG.get("fields", ["category", "material", "size", "theme"])
 
 # LLM Outlier Detection Configuration

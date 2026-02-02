@@ -81,6 +81,7 @@ print(f"Confidence: {recs['confidence']:.2%}")
 | [examples_comparison.py](examples_comparison.py) | Compare Naive Bayes vs SVM vs Ensemble | `python examples_comparison.py` |
 | [examples_kfold_validation.py](examples_kfold_validation.py) | K-fold cross-validation for robust metrics | `python examples_kfold_validation.py` |
 | [examples_category_enrichment.py](examples_category_enrichment.py) | LLM-powered category enrichment | `python examples_category_enrichment.py` |
+| [examples_batch_enrichment.py](examples_batch_enrichment.py) | Batch processing for optimized LLM enrichment | `python examples_batch_enrichment.py` |
 
 ## 🏗️ Project Structure
 
@@ -213,6 +214,23 @@ RANDOM_STATE=42               # Random seed for reproducibility
 N_JOBS=-1                     # CPU cores (-1 = all available)
 ```
 
+**Experimenting with Bundle Parameters:**  
+Use `--bundles-only` to quickly test different `MIN_SUPPORT`, `MIN_CONFIDENCE`, or `MAX_BUNDLE_SIZE` settings without reprocessing the entire dataset:
+
+```bash
+# 1. Prepare data once (with default settings)
+python main.py --prepare
+
+# 2. Edit .env to change MIN_SUPPORT or MIN_CONFIDENCE
+# For example: MIN_SUPPORT=0.01, MIN_CONFIDENCE=0.3
+
+# 3. Regenerate bundles only (skips all preprocessing)
+python main.py --bundles-only
+
+# 4. Compare results with different settings
+python main.py --bundles-only  # Repeat after each parameter change
+```
+
 For complete configuration options, see [QUICK_REF.md](QUICK_REF.md#configuration-reference).
 
 ## 📚 Documentation
@@ -265,8 +283,15 @@ python main.py --demo            # Run demonstration
 # Start REST API server
 python main.py --api
 
+# Open web UI
+open http://localhost:5000
+
+
 # Force reprocessing (ignore cache)
 python main.py --prepare --reprocess
+
+# Regenerate bundles only (experiment with bundle parameters)
+python main.py --bundles-only    # Uses cached processed data, regenerates bundles
 ```
 
 For complete command reference and troubleshooting, see [QUICK_REF.md](QUICK_REF.md).
