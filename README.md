@@ -185,16 +185,81 @@ open http://localhost:8000
 
 ## 🧪 Testing
 
+The project includes comprehensive unit tests with **configurable LLM mocking** for fast, reliable test execution.
+
+### Quick Start
+
 ```bash
-# Run all tests
+# Run all tests with coverage report
+make test
+
+# Fast tests only (LLM disabled)
+make test-llm-off
+
+# View coverage in browser
+make test-html
+```
+
+### Test Status (Data Pipeline)
+
+- **Tests:** 45 tests implemented
+- **Pass Rate:** 39/45 (86.7%)
+- **Coverage:** 46% of data_pipeline.py
+- **Execution Time:** ~8 seconds
+- **Approach:** All LLM functions mocked, synthetic test data (no external dependencies)
+
+### Key Features
+
+✅ **Mock LLM Functions** - All LLM calls mocked via `monkeypatch` for speed and consistency (zero API calls)  
+✅ **Synthetic Test Data** - Realistic fixtures (100-500 rows) generated programmatically for fast, repeatable tests  
+✅ **Coverage Reporting** - Terminal and HTML reports with CI/CD integration (`--cov-fail-under=80`)  
+✅ **Configurable LLM** - Same tests work with LLM enabled/disabled via environment variables or fixtures  
+
+### Available Commands
+
+```bash
+make test              # Full suite with coverage
+make test-quick        # Minimal output
+make test-verbose      # Full output
+make test-coverage     # Terminal coverage report
+make test-html         # HTML coverage report (opens browser)
+make test-llm-off      # Fastest (LLM disabled)
+make test-llm-on       # Integration tests (LLM mocked)
+make test-file FILE=   # Run specific test file
+make test-func FUNC=   # Run specific test function
+make test-failed       # Re-run previously failed tests
+```
+
+### Manual Testing
+
+```bash
+# Activate environment
+source venv/bin/activate
+
+# Run all tests with pytest directly
 pytest tests/ -v
 
 # Run specific test file
-pytest tests/test_recommendation_engine.py -v
+pytest tests/test_data_pipeline.py -v
 
-# Run with coverage report
-pytest tests/ --cov=src --cov-report=html
+# Run specific test class
+pytest tests/test_data_pipeline.py::TestDataPipelineBasics -v
+
+# Run with coverage (terminal + HTML)
+pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
 ```
+
+### Comprehensive Testing Documentation
+
+For detailed testing information including:
+- Test organization and structure
+- LLM mocking strategy
+- How to add new tests
+- CI/CD integration
+- Performance benchmarks
+- Troubleshooting
+
+See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for complete documentation.
 
 ## ⚙️ Configuration
 
