@@ -7,7 +7,8 @@
 This project includes comprehensive unit and integration tests with the following specifications:
 
 - **Test Framework:** pytest
-- **Mocking:** All LLM functions mocked via monkeypatch for speed & consistency
+- **Web Framework:** Flask (with Flask-CORS)
+- **Mocking:** All external services mocked for speed & consistency
 - **Test Data:** Synthetic fixtures (100-500 rows) for fast test execution
 - **Coverage:** Terminal report + HTML report; **fail CI if < 80%**
 - **LLM Config:** Tests support on/off activation of LLM features via environment variables
@@ -88,7 +89,7 @@ tests/
 ├── test_data_pipeline.py       # DataPipeline tests (✅ Implemented)
 ├── test_recommendation_engine.py # Recommendation tests (✅ Implemented)
 ├── test_llm_integration.py     # LLM integration tests (✅ Implemented)
-├── test_api.py                 # (To be implemented)
+├── test_api.py                 # Flask API endpoint tests (✅ Implemented)
 ├── test_utils.py               # (To be implemented)
 └── test_integration.py         # (To be implemented)
 ```
@@ -899,7 +900,7 @@ jobs:
 | Data Pipeline tests | test_data_pipeline.py | ✅ DONE | 2026-02-03 |
 | Recommendation Engine tests | test_recommendation_engine.py | ✅ DONE | 2026-02-04 |
 | LLM Integration tests | test_llm_integration.py | ✅ DONE | 2026-02-04 |
-| API tests | test_api.py | 🔲 TODO | 2026-02-09 |
+| API Endpoint tests | test_api.py | ✅ DONE | 2026-02-04 |
 | Utils tests | test_utils.py | 🔲 TODO | 2026-02-09 |
 | Integration tests | test_integration.py | 🔲 TODO | 2026-02-10 |
 

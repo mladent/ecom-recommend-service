@@ -394,7 +394,7 @@ def get_stats() -> Tuple[Dict[str, Any], int]:
     """
     try:
         engine = get_engine()
-        stats = engine.get_stats()
+        stats = engine.get_engine_stats()
         
         # Augment stats with recommender names
         stats["recommenders"] = list(engine.recommenders.keys())
