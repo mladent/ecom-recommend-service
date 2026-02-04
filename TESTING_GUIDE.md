@@ -45,16 +45,20 @@ make test-html
 ```bash
 # All tests in a file
 pytest tests/test_data_pipeline.py -v
+pytest tests/test_recommendation_engine.py -v
 
 # Specific test class
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics -v
+pytest tests/test_recommendation_engine.py::TestNaiveBayesRecommender -v
 
 # Specific test function
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics::test_initialization_defaults -v
+pytest tests/test_recommendation_engine.py::TestSVMRecommender::test_different_kernels -v
 
 # Using Makefile
 make test-file FILE=tests/test_data_pipeline.py
-make test-func FUNC=TestDataPipelineBasics::test_initialization_defaults
+make test-file FILE=tests/test_recommendation_engine.py
+make test-func FUNC=TestNaiveBayesRecommender::test_fit_basic
 ```
 
 ---
