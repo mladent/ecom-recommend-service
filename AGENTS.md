@@ -400,6 +400,39 @@ When modifying multiple files:
 Use multi_replace_string_in_file for atomicity
 ```
 
+### 4.5 Environment Setup
+
+**Virtual Environment Best Practice**
+- **Always activate the project's virtual environment** before running code or tests
+- This ensures imports, dependencies, and tests align with the project's requirements
+
+**Check for venv:**
+```bash
+# Look for venv directory
+ls -la | grep venv
+
+# If exists, activate it:
+source venv/bin/activate  # Linux/Mac
+# or
+venv\Scripts\activate  # Windows
+```
+
+**Why This Matters for AI Agents:**
+- Import validation reflects actual project dependencies
+- Test execution uses correct package versions
+- Prevents false positives/negatives from system Python packages
+- Commands like `pytest` and `python` use project-specific versions
+- Ensures `get_python_environment_details` returns accurate information
+
+**Workflow Integration:**
+```
+Before running any Python commands:
+1. Check if venv exists in project
+2. Activate venv if present
+3. Verify activation: `which python` should point to venv
+4. Then proceed with testing/development
+```
+
 ---
 
 ## 5. Common Patterns & Anti-Patterns
