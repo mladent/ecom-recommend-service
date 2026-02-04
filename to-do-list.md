@@ -31,16 +31,18 @@
   - **Coverage:** 46% of data_pipeline.py, 17% project-wide
   - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md), [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)
 
-- [ ] **Unit Tests: Recommendation Engine (Core)**  (P0)
-  - **File:** [tests/test_recommendation_engine.py](tests/test_recommendation_engine.py) (extend existing)
+- [x] **Unit Tests: Recommendation Engine (Core)**  (P0) ✅ COMPLETE
+  - **File:** [tests/test_recommendation_engine.py](tests/test_recommendation_engine.py) ✅ Extended
   - **Tasks:**
-    - Test `NaiveBayesBundleRecommender.fit()` with edge cases (empty bundles, single item)
-    - Test `SVMBundleRecommender.fit()` with different kernels (RBF, linear, poly)
-    - Test ensemble averaging in `BundleRecommendationEngine.recommend_bundles()`
-    - Test OOS item detection and LLM substitution logic (`select_alternatives_with_llm`)
-    - Test threshold-based bundle filtering
-    - Test error handling for unfitted models, invalid inputs, missing inventory
-  - **Acceptance Criteria:** All tests pass; coverage ≥ 85% for engine
+    - ✅ Test `NaiveBayesBundleRecommender.fit()` with edge cases (empty bundles, single item)
+    - ✅ Test `SVMBundleRecommender.fit()` with different kernels (RBF, linear, poly)
+    - ✅ Test ensemble averaging in `BundleRecommendationEngine.recommend_bundles()`
+    - ✅ Test OOS item detection and LLM substitution logic (`select_alternatives_with_llm`)
+    - ✅ Test threshold-based bundle filtering
+    - ✅ Test error handling for unfitted models, invalid inputs, missing inventory
+  - **Status:** 62 new tests implemented, all 64 tests passing (100%)
+  - **Coverage:** 86% of recommendation_engine.py (375 statements, 44 missed)
+  - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md) updated with test class details
 
 - [ ] **Unit Tests: LLM Integration & OOS Substitution** (P0)
   - **File:** [tests/test_llm_integration.py](tests/test_llm_integration.py) (create new)
@@ -366,7 +368,7 @@
 
 | Milestone | Target Date | Status | Dependencies |
 |-----------|-------------|--------|--------------|
-| P0 Testing Complete | 2026-02-10 | 🔲 Not Started | Unit test implementations |
+| P0 Testing Complete | 2026-02-10 | � In Progress (2/5) | Unit test implementations |
 | MLflow Foundation | 2026-02-12 | 🔲 Not Started | MLflow config, basic logging |
 | MLflow Advanced | 2026-02-17 | 🔲 Not Started | MLflow foundation complete |
 | Integration Tests Pass | 2026-02-19 | 🔲 Not Started | All P0 tests passing |
