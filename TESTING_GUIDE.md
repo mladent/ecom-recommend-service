@@ -46,19 +46,33 @@ make test-html
 # All tests in a file
 pytest tests/test_data_pipeline.py -v
 pytest tests/test_recommendation_engine.py -v
+pytest tests/test_llm_integration.py -v
 
 # Specific test class
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics -v
 pytest tests/test_recommendation_engine.py::TestNaiveBayesRecommender -v
+pytest tests/test_llm_integration.py::TestSelectAlternativesWithLLM -v
 
 # Specific test function
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics::test_initialization_defaults -v
 pytest tests/test_recommendation_engine.py::TestSVMRecommender::test_different_kernels -v
+pytest tests/test_llm_integration.py::TestSelectAlternativesWithLLM::test_success_with_mocked_openai -v
+
+# LLM Integration tests (mocked by default, fast & free)
+pytest tests/test_llm_integration.py -v  # All 19 tests with mocking, 3 real tests skipped
+pytest tests/test_llm_integration.py::TestFallbackMechanisms -v  # Fallback tests only
+pytest tests/test_llm_integration.py -m "llm" -v  # All LLM-related tests
+
+# LLM Integration tests with real API calls (requires API keys, costs ~$0.01)
+USE_REAL_LLM=true pytest tests/test_llm_integration.py::TestRealLLMCalls -v
+USE_REAL_LLM=true LLM_BUDGET_LIMIT=3 pytest tests/test_llm_integration.py::TestRealLLMCalls::test_real_openai_call_minimal -v
 
 # Using Makefile
 make test-file FILE=tests/test_data_pipeline.py
 make test-file FILE=tests/test_recommendation_engine.py
+make test-file FILE=tests/test_llm_integration.py
 make test-func FUNC=TestNaiveBayesRecommender::test_fit_basic
+make test-func FUNC=TestSelectAlternativesWithLLM::test_success_with_mocked_openai
 ```
 
 ---
@@ -659,9 +673,23 @@ make test-html
 
 # Specific file
 make test-file FILE=tests/test_data_pipeline.py
+make test-file FILE=tests/test_llm_integration.py
 
 # Specific function
 make test-func FUNC=TestDataPipelineBasics::test_initialization_defaults
+make test-func FUNC=TestSelectAlternativesWithLLM::test_success_with_mocked_openai
+
+# LLM Integration tests (mocked by default, zero cost)
+pytest tests/test_llm_integration.py -v  # 19 passed, 3 skipped
+pytest tests/test_llm_integration.py::TestSelectAlternativesWithLLM -v  # LLM core tests
+pytest tests/test_llm_integration.py::TestFallbackMechanisms -v  # Fallback & degradation tests
+pytest tests/test_llm_integration.py::TestInventoryOperations -v  # Inventory helpers
+pytest tests/test_llm_integration.py -m "llm" -v  # All LLM tests (mocked)
+
+# LLM Integration tests with real API calls (opt-in only, requires USE_REAL_LLM=true)
+USE_REAL_LLM=true pytest tests/test_llm_integration.py::TestRealLLMCalls -v  # All 3 real tests
+USE_REAL_LLM=true LLM_BUDGET_LIMIT=3 pytest tests/test_llm_integration.py::TestRealLLMCalls::test_real_openai_call_minimal -v  # Single provider
+pytest tests/test_llm_integration.py -m "llm_real" -v  # All real LLM tests
 
 # Previously failed tests
 make test-failed
