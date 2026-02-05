@@ -17,7 +17,7 @@ A proof-of-concept machine learning service that recommends product bundles to e
 - **Bundle Discovery**: Apriori-like frequent itemset mining for automatic bundle generation
 - **Cross-sell Recommendations**: Intelligent product suggestions based on purchase patterns
 - **Model Persistence**: Save and load trained models for production deployment
-- **REST API**: FastAPI-based web service with interactive UI
+- **REST API**: Flask-based web service with JSON endpoints
 - **LLM Integration**: Category enrichment and description normalization capabilities
 - **Docker Support**: Full containerization for easy deployment
 - **Comprehensive Testing**: Unit tests with pytest covering all major components
@@ -91,7 +91,7 @@ ecom-recommend-service/
 │   ├── data_pipeline.py         # Data loading and preprocessing (340 lines)
 │   ├── recommendation_engine.py # ML algorithms (420 lines)
 │   ├── data_splitter.py         # Train/test splitting strategies
-│   ├── api.py                   # FastAPI REST API
+│   ├── api.py                   # Flask REST API
 │   ├── config.py                # Configuration management
 │   └── utils.py                 # Helper functions
 ├── data/                         # Dataset storage (created on first run)
@@ -207,6 +207,16 @@ make test-html
 - **Coverage:** 46% of data_pipeline.py
 - **Execution Time:** ~8 seconds
 - **Approach:** All LLM functions mocked, synthetic test data (no external dependencies)
+
+### Test Status (API Endpoints)
+
+- **Tests:** 49 tests implemented
+- **Pass Rate:** 49/49 (100%)
+- **Coverage:** 80% of src/api.py
+- **Execution Time:** ~9.7 seconds
+- **Framework:** Flask with mocked BundleRecommendationEngine
+- **Approach:** All endpoints tested with @patch decorator (zero model loading cost)
+- **Endpoints Covered:** 10/10 (health, recommenders, bundles, bundles/batch, cross-sell, stats, static files, error handlers)
 
 ### Key Features
 
@@ -393,7 +403,7 @@ ToDo
 ## 🙏 Acknowledgments
 
 - **Dataset**: [E-Commerce Data](https://www.kaggle.com/carrie1/ecommerce-data) from Kaggle by UCI ML Repository
-- **Libraries**: scikit-learn, pandas, numpy, FastAPI
+- **Libraries**: scikit-learn, pandas, numpy, Flask
 - **ML Algorithms**: Naive Bayes, Support Vector Machines, Ensemble Methods
 - **Market Basket Analysis**: Apriori-like frequent itemset mining
 
