@@ -46,19 +46,33 @@ make test-html
 # All tests in a file
 pytest tests/test_data_pipeline.py -v
 pytest tests/test_recommendation_engine.py -v
+pytest tests/test_llm_integration.py -v
 
 # Specific test class
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics -v
 pytest tests/test_recommendation_engine.py::TestNaiveBayesRecommender -v
+pytest tests/test_llm_integration.py::TestSelectAlternativesWithLLM -v
 
 # Specific test function
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics::test_initialization_defaults -v
 pytest tests/test_recommendation_engine.py::TestSVMRecommender::test_different_kernels -v
+pytest tests/test_llm_integration.py::TestSelectAlternativesWithLLM::test_success_with_mocked_openai -v
+
+# LLM Integration tests (mocked by default, fast & free)
+pytest tests/test_llm_integration.py -v  # All 19 tests with mocking, 3 real tests skipped
+pytest tests/test_llm_integration.py::TestFallbackMechanisms -v  # Fallback tests only
+pytest tests/test_llm_integration.py -m "llm" -v  # All LLM-related tests
+
+# LLM Integration tests with real API calls (requires API keys, costs ~$0.01)
+USE_REAL_LLM=true pytest tests/test_llm_integration.py::TestRealLLMCalls -v
+USE_REAL_LLM=true LLM_BUDGET_LIMIT=3 pytest tests/test_llm_integration.py::TestRealLLMCalls::test_real_openai_call_minimal -v
 
 # Using Makefile
 make test-file FILE=tests/test_data_pipeline.py
 make test-file FILE=tests/test_recommendation_engine.py
+make test-file FILE=tests/test_llm_integration.py
 make test-func FUNC=TestNaiveBayesRecommender::test_fit_basic
+make test-func FUNC=TestSelectAlternativesWithLLM::test_success_with_mocked_openai
 ```
 
 ---
@@ -73,7 +87,7 @@ tests/
 ├── conftest.py                 # Shared fixtures & configuration
 ├── test_data_pipeline.py       # DataPipeline tests (✅ Implemented)
 ├── test_recommendation_engine.py # Recommendation tests (✅ Implemented)
-├── test_llm_integration.py     # (To be implemented)
+├── test_llm_integration.py     # LLM integration tests (✅ Implemented)
 ├── test_api.py                 # (To be implemented)
 ├── test_utils.py               # (To be implemented)
 └── test_integration.py         # (To be implemented)
@@ -480,9 +494,108 @@ def test_max_bundle_size_effect(self):
     """max_size parameter limits bundle size."""
 ```
 
+#### ✅ TestSelectAlternativesWithLLM (Implemented)
+Tests core LLM integration for OOS substitution with strict mocking.
+
+```python
+def test_empty_missing_item(self, sample_inventory, mock_urllib_llm_success):
+    """Test handling of empty missing_item string."""
+    # Verify graceful handling when missing_item is ""
+
+def test_success_with_mocked_openai(self, mock_urllib_llm_success, sample_inventory, sample_candidates):
+    """Test successful LLM call with mocked OpenAI response."""
+    # Verify urllib mocking works correctly
+
+@pytest.mark.parametrize("provider", ["openai", "azure", "gemini"])
+def test_different_providers(self, provider, mock_urllib_llm_success, ...):
+    """Test different LLM providers with mocked responses."""
+    # Verify all providers use urllib.request correctly
+
+def test_invalid_json_graceful_failure(self, sample_inventory, sample_candidates):
+    """Test graceful handling when LLM returns invalid JSON."""
+    # Mock invalid JSON, verify fallback to empty list
+```
+
+#### ✅ TestFallbackMechanisms (Implemented)
+Tests heuristic fallback when LLM unavailable.
+
+```python
+def test_heuristic_selection_returns_dict_or_none(self):
+    """Test select_alternative_heuristic basic functionality."""
+    # Verify Jaccard similarity fallback
+
+def test_fallback_on_llm_error(self, mock_urllib_llm_error, sample_inventory, sample_candidates):
+    """Test fallback to heuristic when LLM service fails."""
+    # Verify graceful degradation without crash
+```
+
+#### ✅ TestInventoryOperations (Implemented)
+Tests inventory loading and normalization.
+
+```python
+def test_load_missing_inventory_file(self):
+    """Test load_inventory_csv with non-existent file."""
+    # Verify FileNotFoundError handling
+
+def test_normalize_description_lowercasing(self):
+    """Test normalize_description_basic lowercase conversion."""
+    # Verify "RED Roses" → "red roses"
+
+def test_normalize_description_whitespace(self):
+    """Test normalize_description_basic whitespace handling."""
+    # Verify "  multi   space  " → "multi space"
+```
+
+#### ✅ TestResponseStructure (Implemented)
+Tests LLM response format validation.
+
+```python
+def test_alternatives_list_format(self):
+    """Test select_alternatives_with_llm returns List[Dict]."""
+    # Verify response has correct structure
+
+def test_audit_trail_structure(self, mock_urllib_llm_success, sample_inventory, sample_candidates):
+    """Test each alternative has item, score, reason fields."""
+    # Verify required fields present in all alternatives
+```
+
+#### ✅ TestRealLLMCalls (Implemented - Opt-in Only)
+Tests real LLM API calls with strict budget controls (**SKIPPED by default**).
+
+```python
+@pytest.mark.llm_real
+@pytest.mark.skipif(not USE_REAL_LLM, reason="Real LLM testing disabled")
+def test_real_openai_call_minimal(self):
+    """Test real OpenAI API call with minimal context."""
+    # Requires USE_REAL_LLM=true, enforces budget limit
+    # Minimal context: ~200 tokens ≈ $0.001 per call
+
+@pytest.mark.llm_real
+@pytest.mark.skipif(not USE_REAL_LLM, reason="Real LLM testing disabled")
+def test_real_azure_call_minimal(self):
+    """Test real Azure OpenAI call with minimal context."""
+    # Budget-controlled real API testing
+```
+
+**Cost Control Mechanisms:**
+- **USE_REAL_LLM**: Environment variable (default: `false`), enables real API calls only when explicitly set
+- **LLM_BUDGET_LIMIT**: Maximum real calls allowed per test run (default: 5)
+- **_check_llm_budget()**: RuntimeError raised if budget exceeded
+- **Minimal Context**: Real tests use 2-3 candidates (~200 tokens) vs 100+ in production
+- **Opt-in Markers**: `@pytest.mark.llm_real` ensures real tests only run when explicitly requested
+
+**Usage:**
+```bash
+# All tests with mocking (default, fast, free)
+pytest tests/test_llm_integration.py -v  # 19 passed, 3 skipped
+
+# Real LLM tests (requires API keys, costs ~$0.01)
+USE_REAL_LLM=true LLM_BUDGET_LIMIT=3 pytest tests/test_llm_integration.py::TestRealLLMCalls -v
+```
+
 ### Test Statistics
 
-**Total Test Cases: 106**
+**Total Test Cases: 125**
 
 | Category | Count | Status |
 |----------|-------|--------|
@@ -499,6 +612,21 @@ def test_max_bundle_size_effect(self):
 | **Subtotal** | **44** | **✅** |
 | **Recommendation Engine Tests** | | |
 | NaiveBayesRecommender | 17 | ✅ |
+| SVMRecommender | 15 | ✅ |
+| BundleRecommendationEngine | 30 | ✅ |
+| **Subtotal** | **62** | **✅** |
+| **LLM Integration Tests** | | |
+| SelectAlternativesWithLLM | 9 | ✅ |
+| FallbackMechanisms | 4 | ✅ |
+| InventoryOperations | 4 | ✅ |
+| ResponseStructure | 2 | ✅ |
+| RealLLMCalls (opt-in) | 3 | ✅ (skipped) |
+| **Subtotal** | **22** | **✅** |
+| **TOTAL IMPLEMENTED** | **128** | **✅** |
+
+**Planned for P0 completion:**
+- API tests: 18+
+- Utilities tests: 12+
 | SVMRecommender | 15 | ✅ |
 | BundleRecommendationEngine | 30 | ✅ |
 | **Subtotal** | **62** | **✅** |
@@ -545,9 +673,23 @@ make test-html
 
 # Specific file
 make test-file FILE=tests/test_data_pipeline.py
+make test-file FILE=tests/test_llm_integration.py
 
 # Specific function
 make test-func FUNC=TestDataPipelineBasics::test_initialization_defaults
+make test-func FUNC=TestSelectAlternativesWithLLM::test_success_with_mocked_openai
+
+# LLM Integration tests (mocked by default, zero cost)
+pytest tests/test_llm_integration.py -v  # 19 passed, 3 skipped
+pytest tests/test_llm_integration.py::TestSelectAlternativesWithLLM -v  # LLM core tests
+pytest tests/test_llm_integration.py::TestFallbackMechanisms -v  # Fallback & degradation tests
+pytest tests/test_llm_integration.py::TestInventoryOperations -v  # Inventory helpers
+pytest tests/test_llm_integration.py -m "llm" -v  # All LLM tests (mocked)
+
+# LLM Integration tests with real API calls (opt-in only, requires USE_REAL_LLM=true)
+USE_REAL_LLM=true pytest tests/test_llm_integration.py::TestRealLLMCalls -v  # All 3 real tests
+USE_REAL_LLM=true LLM_BUDGET_LIMIT=3 pytest tests/test_llm_integration.py::TestRealLLMCalls::test_real_openai_call_minimal -v  # Single provider
+pytest tests/test_llm_integration.py -m "llm_real" -v  # All real LLM tests
 
 # Previously failed tests
 make test-failed
@@ -756,7 +898,7 @@ jobs:
 |------|-------|--------|--------|
 | Data Pipeline tests | test_data_pipeline.py | ✅ DONE | 2026-02-03 |
 | Recommendation Engine tests | test_recommendation_engine.py | ✅ DONE | 2026-02-04 |
-| LLM Integration tests | test_llm_integration.py | 🔲 TODO | 2026-02-08 |
+| LLM Integration tests | test_llm_integration.py | ✅ DONE | 2026-02-04 |
 | API tests | test_api.py | 🔲 TODO | 2026-02-09 |
 | Utils tests | test_utils.py | 🔲 TODO | 2026-02-09 |
 | Integration tests | test_integration.py | 🔲 TODO | 2026-02-10 |
