@@ -1,6 +1,6 @@
 # Testing Guide for E-Commerce Recommendation Service
 
-**Last Updated:** 3 February 2026
+**Last Updated:** 4 February 2026
 
 ## Overview
 
@@ -45,16 +45,20 @@ make test-html
 ```bash
 # All tests in a file
 pytest tests/test_data_pipeline.py -v
+pytest tests/test_recommendation_engine.py -v
 
 # Specific test class
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics -v
+pytest tests/test_recommendation_engine.py::TestNaiveBayesRecommender -v
 
 # Specific test function
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics::test_initialization_defaults -v
+pytest tests/test_recommendation_engine.py::TestSVMRecommender::test_different_kernels -v
 
 # Using Makefile
 make test-file FILE=tests/test_data_pipeline.py
-make test-func FUNC=TestDataPipelineBasics::test_initialization_defaults
+make test-file FILE=tests/test_recommendation_engine.py
+make test-func FUNC=TestNaiveBayesRecommender::test_fit_basic
 ```
 
 ---
@@ -68,7 +72,7 @@ tests/
 ├── __init__.py                 # Package marker
 ├── conftest.py                 # Shared fixtures & configuration
 ├── test_data_pipeline.py       # DataPipeline tests (✅ Implemented)
-├── test_recommendation_engine.py # (To be implemented)
+├── test_recommendation_engine.py # Recommendation tests (✅ Implemented)
 ├── test_llm_integration.py     # (To be implemented)
 ├── test_api.py                 # (To be implemented)
 ├── test_utils.py               # (To be implemented)
@@ -404,6 +408,67 @@ def test_pipeline_reproducibility(self):
     """Same RANDOM_STATE produces same results."""
 ```
 
+#### ✅ TestNaiveBayesRecommender (Implemented)
+Tests Naive Bayes bundle recommender with edge cases.
+
+```python
+def test_initialization_default(self):
+    """Test recommender initialization with default model type."""
+    recommender = NaiveBayesBundleRecommender()
+    assert recommender.name == "NaiveBayesBundleRecommender"
+
+def test_fit_basic(self, sample_transactions, sample_bundles):
+    """Test basic model fitting."""
+    # Fit model and verify metrics
+
+def test_fit_with_empty_bundles(self, sample_transactions):
+    """Test fitting with empty bundles (all labels become 0)."""
+    # Verify NB can handle imbalanced data
+
+def test_gaussian_vs_multinomial(self, large_transactions, large_bundles):
+    """Test that both Gaussian and Multinomial NB work."""
+    # Verify both model types fit and predict
+```
+
+#### ✅ TestSVMRecommender (Implemented)
+Tests SVM bundle recommender with different kernels and parameters.
+
+```python
+def test_different_kernels(self, large_transactions, large_bundles):
+    """Test different SVM kernels (linear, rbf, poly)."""
+    # Verify all kernels work correctly
+
+def test_different_c_values(self, large_transactions, large_bundles):
+    """Test different regularization C values."""
+    # Verify C parameter effect
+
+def test_feature_scaling(self, sample_transactions, sample_bundles):
+    """Test that feature scaling is applied."""
+    # Verify StandardScaler is fitted
+```
+
+#### ✅ TestBundleRecommendationEngine (Implemented)
+Tests main recommendation engine with ensemble, OOS, and persistence.
+
+```python
+def test_recommend_bundles_ensemble_averaging(self):
+    """Test ensemble averaging with multiple recommenders."""
+    # Verify probabilities averaged from NB + SVM
+
+def test_threshold_filtering_medium(self):
+    """Test threshold=0.5 for moderate filtering."""
+    # Verify confidence threshold filtering
+
+@patch('src.recommendation_engine.OOS_ENABLED', True)
+def test_oos_substitution_enabled(self, ...):
+    """Test OOS substitution when enabled."""
+    # Mock inventory and LLM, verify substitution logic
+
+def test_model_persistence_save_load(self, tmp_path, ...):
+    """Test saving and loading model."""
+    # Verify save → load → predict consistency
+```
+
 #### ✅ TestConfigurationParameters (Implemented)
 Tests effect of configuration parameters.
 
@@ -417,10 +482,11 @@ def test_max_bundle_size_effect(self):
 
 ### Test Statistics
 
-**Total Test Cases: 85+**
+**Total Test Cases: 106**
 
 | Category | Count | Status |
 |----------|-------|--------|
+| **Data Pipeline Tests** | | |
 | Basic Tests | 5 | ✅ |
 | Load & Explore | 8 | ✅ |
 | Data Cleaning | 5 | ✅ |
@@ -430,10 +496,15 @@ def test_max_bundle_size_effect(self):
 | Serialization | 3 | ✅ |
 | Full Pipeline | 3 | ✅ |
 | Configuration | 2 | ✅ |
-| **Total** | **44** | **✅** |
+| **Subtotal** | **44** | **✅** |
+| **Recommendation Engine Tests** | | |
+| NaiveBayesRecommender | 17 | ✅ |
+| SVMRecommender | 15 | ✅ |
+| BundleRecommendationEngine | 30 | ✅ |
+| **Subtotal** | **62** | **✅** |
+| **TOTAL IMPLEMENTED** | **106** | **✅** |
 
 **Planned for P0 completion:**
-- Recommendation Engine tests: 20+
 - LLM Integration tests: 15+
 - API tests: 18+
 - Utilities tests: 12+
@@ -562,6 +633,8 @@ class TestFullPipeline:
 | Unit tests (LLM off) | ~2-5s | Fast, no LLM calls |
 | Unit tests (LLM mocked) | ~5-10s | With mock LLM overhead |
 | Data pipeline tests | ~8-12s | 44 tests, synthetic data |
+| Recommendation engine tests | ~12-15s | 62 tests, NB + SVM + Engine |
+| All implemented tests | ~20-27s | 106 tests total |
 | All tests (P0 complete) | ~45-60s | ~150 tests total |
 
 ### Memory Usage
@@ -681,8 +754,8 @@ jobs:
 
 | Task | Files | Status | Target |
 |------|-------|--------|--------|
-| Data Pipeline tests | test_data_pipeline.py | ✅ DONE | 2026-02-05 |
-| Recommendation Engine tests | test_recommendation_engine.py | 🔲 TODO | 2026-02-07 |
+| Data Pipeline tests | test_data_pipeline.py | ✅ DONE | 2026-02-03 |
+| Recommendation Engine tests | test_recommendation_engine.py | ✅ DONE | 2026-02-04 |
 | LLM Integration tests | test_llm_integration.py | 🔲 TODO | 2026-02-08 |
 | API tests | test_api.py | 🔲 TODO | 2026-02-09 |
 | Utils tests | test_utils.py | 🔲 TODO | 2026-02-09 |
