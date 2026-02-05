@@ -594,9 +594,75 @@ tests/         # Test suite
 
 ---
 
-## 9. Testing Best Practices
+## 9. Version Control Best Practices
 
-### 9.1 Test Organization
+### 9.1 Git Commit Messages
+
+**Structure:**
+```
+<type>: <subject>
+
+<body>
+
+<footer>
+```
+
+**Commit Types:**
+- `feat:` New feature
+- `fix:` Bug fix
+- `docs:` Documentation changes
+- `test:` Adding or updating tests
+- `refactor:` Code refactoring
+- `perf:` Performance improvements
+- `chore:` Build process, dependencies, or tooling
+
+**Best Practices:**
+- ✅ Use descriptive, imperative mood ("Add feature" not "Added feature")
+- ✅ Keep subject line under 72 characters
+- ✅ Use body to explain what and why, not how
+- ✅ Reference issue numbers in footer (e.g., "Fixes #123")
+- ❌ **Do NOT use emoticons or emojis** (keeps commits professional and searchable)
+- ❌ Do NOT use vague messages ("fix stuff", "updates", "wip")
+
+**Examples:**
+
+Good:
+```
+feat: Add API endpoint testing documentation to TESTING_GUIDE.md
+
+Add comprehensive instructions for testing Flask API endpoints including
+test patterns, mocking strategies, and command examples.
+
+Updates Test Statistics table from 128 to 171 total tests.
+```
+
+Bad:
+```
+✨ Add cool new stuff 🚀
+
+Updated some files
+```
+
+### 9.2 Branch Naming
+
+**Patterns:**
+- `feature/<description>` - New features
+- `fix/<description>` - Bug fixes
+- `test/<description>` - Test additions
+- `docs/<description>` - Documentation
+- `refactor/<description>` - Code refactoring
+
+**QA/Integration Branches:**
+- `qa` - Quality assurance branch
+- `staging` - Pre-production environment
+- `integration` - Feature integration
+- `develop` - Main development branch (Git Flow)
+
+---
+
+## 10. Testing Best Practices
+
+### 10.1 Test Organization
 
 ```python
 class TestBundleRecommendationEngine:
@@ -619,7 +685,7 @@ class TestBundleRecommendationEngine:
         assert "std_accuracy" in metrics["model_name"]
 ```
 
-### 9.2 Integration Tests
+### 10.2 Integration Tests
 
 **Test Real Workflows:**
 ```python
@@ -652,7 +718,7 @@ def test_end_to_end_recommendation_workflow():
 
 ---
 
-## 10. References & Resources
+## 11. References & Resources
 
 **Python Standards:**
 - PEP 8: Style Guide
