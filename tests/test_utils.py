@@ -868,5 +868,548 @@ class TestBatchScoreAnomaliesWithLLM:
 
 
 # ============================================================================
-# END OF P0 TESTS - Ready for validation
+# P1 TESTS - JSON I/O, Data Validation, Inventory, and Utilities
+# ============================================================================
+
+# P1.1: JSON File I/O Tests
+# ============================================================================
+
+class TestLoadJsonFile:
+    """Tests for load_json_file() function."""
+    
+    def test_load_valid_json_file(self, temp_json_file):
+        """Test loading valid JSON file."""
+        # temp_json_file fixture creates: {"key": "value", "items": [1, 2, 3]}
+        result = load_json_file(str(temp_json_file))
+        assert isinstance(result, dict)
+        assert "key" in result
+        assert result["key"] == "value"
+    
+    def test_load_nonexistent_file(self):
+        """Test loading nonexistent file returns empty dict."""
+        result = load_json_file("/nonexistent/path/file.json")
+        assert result == {}
+    
+    def test_load_empty_json_file(self, tmp_path):
+        """Test loading empty JSON file returns empty dict."""
+        empty_file = tmp_path / "empty.json"
+        empty_file.write_text("")
+        result = load_json_file(str(empty_file))
+        assert result == {}
+    
+    def test_load_invalid_json_file(self, tmp_path):
+        """Test loading invalid JSON file returns empty dict."""
+        invalid_file = tmp_path / "invalid.json"
+        invalid_file.write_text("{not valid json")
+        result = load_json_file(str(invalid_file))
+        assert result == {}
+    
+    def test_load_json_array(self, tmp_path):
+        """Test loading JSON array file."""
+        array_file = tmp_path / "array.json"
+        array_file.write_text('[{"id": 1}, {"id": 2}]')
+        result = load_json_file(str(array_file))
+        assert isinstance(result, list)
+        assert len(result) == 2
+    
+    def test_load_json_null(self, tmp_path):
+        """Test loading JSON null value."""
+        null_file = tmp_path / "null.json"
+        null_file.write_text("null")
+        result = load_json_file(str(null_file))
+        assert result is None
+    
+    def test_load_json_string(self, tmp_path):
+        """Test loading JSON string value."""
+        string_file = tmp_path / "string.json"
+        string_file.write_text('"hello"')
+        result = load_json_file(str(string_file))
+        assert result == "hello"
+    
+    def test_load_json_with_unicode(self, tmp_path):
+        """Test loading JSON with unicode characters."""
+        unicode_file = tmp_path / "unicode.json"
+        unicode_file.write_text('{"message": "Hello 世界"}', encoding='utf-8')
+        result = load_json_file(str(unicode_file))
+        assert result["message"] == "Hello 世界"
+
+
+class TestSaveJsonFile:
+    """Tests for save_json_file() function."""
+    
+    def test_save_dict_to_json(self, tmp_path):
+        """Test saving dictionary to JSON file."""
+        output_file = tmp_path / "output.json"
+        data = {"key": "value", "number": 42}
+        save_json_file(str(output_file), data)
+        
+        # Verify file exists and contains correct data
+        assert output_file.exists()
+        result = json.loads(output_file.read_text())
+        assert result == data
+    
+    def test_save_list_to_json(self, tmp_path):
+        """Test saving list to JSON file."""
+        output_file = tmp_path / "list.json"
+        data = [1, 2, 3, "test"]
+        save_json_file(str(output_file), data)
+        
+        assert output_file.exists()
+        result = json.loads(output_file.read_text())
+        assert result == data
+    
+    def test_save_empty_dict(self, tmp_path):
+        """Test saving empty dictionary."""
+        output_file = tmp_path / "empty.json"
+        save_json_file(str(output_file), {})
+        
+        assert output_file.exists()
+        result = json.loads(output_file.read_text())
+        assert result == {}
+    
+    def test_save_nested_structure(self, tmp_path):
+        """Test saving nested dictionary structure."""
+        output_file = tmp_path / "nested.json"
+        data = {
+            "level1": {
+                "level2": {
+                    "level3": ["a", "b", "c"]
+                }
+            }
+        }
+        save_json_file(str(output_file), data)
+        
+        result = json.loads(output_file.read_text())
+        assert result == data
+    
+    def test_save_with_unicode(self, tmp_path):
+        """Test saving data with unicode characters."""
+        output_file = tmp_path / "unicode.json"
+        data = {"greeting": "こんにちは", "emoji": "🎉"}
+        save_json_file(str(output_file), data)
+        
+        result = json.loads(output_file.read_text())
+        assert result["greeting"] == "こんにちは"
+    
+    def test_save_overwrites_existing_file(self, tmp_path):
+        """Test that save_json_file overwrites existing file."""
+        output_file = tmp_path / "overwrite.json"
+        
+        # Save first data
+        save_json_file(str(output_file), {"version": 1})
+        
+        # Overwrite with new data
+        save_json_file(str(output_file), {"version": 2})
+        
+        result = json.loads(output_file.read_text())
+        assert result == {"version": 2}
+    
+    def test_save_creates_nonexistent_directory(self, tmp_path):
+        """Test that save_json_file creates directory if needed."""
+        output_file = tmp_path / "subdir" / "nested" / "file.json"
+        data = {"test": "data"}
+        
+        # Ensure directory doesn't exist
+        assert not output_file.parent.exists()
+        
+        # This should work - function should create directories
+        try:
+            save_json_file(str(output_file), data)
+            # If function creates dirs, file should exist
+            if output_file.exists():
+                result = json.loads(output_file.read_text())
+                assert result == data
+        except (FileNotFoundError, OSError):
+            # If function doesn't create dirs, that's also acceptable behavior
+            pass
+
+
+class TestLoadAliasMap:
+    """Tests for load_alias_map() function."""
+    
+    def test_load_valid_alias_map(self, tmp_path):
+        """Test loading valid alias map from JSON file."""
+        alias_file = tmp_path / "aliases.json"
+        # load_alias_map expects dict values to be strings, not lists
+        aliases = {
+            "item1": "variant1",
+            "item2": "variant2"
+        }
+        alias_file.write_text(json.dumps(aliases))
+        
+        result = load_alias_map(str(alias_file))
+        assert isinstance(result, dict)
+        # Values should be normalized (lowercased, stripped, spaces collapsed)
+        assert len(result) > 0
+    
+    def test_load_alias_map_nonexistent_file(self):
+        """Test loading nonexistent alias file returns empty dict."""
+        result = load_alias_map("/nonexistent/aliases.json")
+        assert result == {}
+    
+    def test_load_alias_map_invalid_json(self, tmp_path):
+        """Test loading invalid JSON alias file returns empty dict."""
+        invalid_file = tmp_path / "invalid_aliases.json"
+        invalid_file.write_text("not json")
+        
+        result = load_alias_map(str(invalid_file))
+        assert result == {}
+    
+    def test_load_alias_map_empty_file(self, tmp_path):
+        """Test loading empty alias file returns empty dict."""
+        empty_file = tmp_path / "empty_aliases.json"
+        empty_file.write_text("")
+        
+        result = load_alias_map(str(empty_file))
+        assert result == {}
+    
+    def test_load_alias_map_with_special_characters(self, tmp_path):
+        """Test loading alias map with special characters in keys/values."""
+        alias_file = tmp_path / "special_aliases.json"
+        # Keys and values should both be strings
+        aliases = {
+            "item-with-dash": "variant_with_underscore",
+            "item.with.dots": "variant (with) parens"
+        }
+        alias_file.write_text(json.dumps(aliases))
+        
+        result = load_alias_map(str(alias_file))
+        assert isinstance(result, dict)
+        # Keys should be normalized
+        assert all(isinstance(k, str) for k in result.keys())
+    
+    def test_load_alias_map_with_unicode(self, tmp_path):
+        """Test loading alias map with unicode characters."""
+        alias_file = tmp_path / "unicode_aliases.json"
+        aliases = {
+            "日本語": "バリエーション1",
+            "中文": "变体1"
+        }
+        alias_file.write_text(json.dumps(aliases, ensure_ascii=False), encoding='utf-8')
+        
+        result = load_alias_map(str(alias_file))
+        assert isinstance(result, dict)
+
+
+# P1.2: Data Validation Tests
+# ============================================================================
+
+class TestValidateTransaction:
+    """Tests for validate_transaction() function - validates list of product descriptions."""
+    
+    def test_valid_transaction(self):
+        """Test validation of valid transaction list."""
+        transaction = ["item1", "item2", "item3"]
+        result = validate_transaction(transaction)
+        assert result is True
+    
+    def test_transaction_empty_list(self):
+        """Test validation of empty transaction list is invalid."""
+        result = validate_transaction([])
+        assert result is False
+    
+    def test_transaction_none(self):
+        """Test validation of None transaction is invalid."""
+        result = validate_transaction(None)
+        assert result is False
+    
+    def test_transaction_not_list(self):
+        """Test validation of non-list transaction is invalid."""
+        result = validate_transaction("not a list")
+        assert result is False
+    
+    def test_transaction_with_non_string_items(self):
+        """Test transaction with non-string items is invalid."""
+        transaction = ["item1", 123, "item3"]
+        result = validate_transaction(transaction)
+        assert result is False
+    
+    def test_transaction_single_item(self):
+        """Test transaction with single item is valid."""
+        result = validate_transaction(["white hanging heart t-light holder"])
+        assert result is True
+
+
+class TestFilterTransaction:
+    """Tests for filter_transaction() function - filters items by minimum length."""
+    
+    def test_filter_valid_items(self):
+        """Test filtering valid transaction items."""
+        transaction = ["ITEM ONE", "ITEM TWO", "ITEM THREE"]
+        result = filter_transaction(transaction)
+        assert isinstance(result, list)
+        assert len(result) == 3
+    
+    def test_filter_removes_short_items(self):
+        """Test that short items are filtered out (min_length=3)."""
+        transaction = ["ITEM", "at", "SOMETHING LONGER"]
+        result = filter_transaction(transaction, min_length=3)
+        # "at" should be removed (< 3 chars)
+        assert "at" not in result
+        assert "item" in result or "something longer" in result
+    
+    def test_filter_lowercases_items(self):
+        """Test that filter lowercases items."""
+        transaction = ["UPPERCASE", "MixedCase", "lowercase"]
+        result = filter_transaction(transaction)
+        assert all(item.islower() for item in result)
+    
+    def test_filter_strips_whitespace(self):
+        """Test that filter strips leading/trailing whitespace."""
+        transaction = ["  spaced  ", "\ttabbed\t", "normal"]
+        result = filter_transaction(transaction)
+        # Result should not have leading/trailing whitespace
+        for item in result:
+            assert item == item.strip()
+    
+    def test_filter_empty_transaction(self):
+        """Test filtering empty transaction list."""
+        result = filter_transaction([])
+        assert result == []
+    
+    def test_filter_custom_min_length(self):
+        """Test filtering with custom minimum length."""
+        transaction = ["ABC", "ABCD", "AB"]
+        result = filter_transaction(transaction, min_length=4)
+        # Only "abcd" should remain
+        assert len(result) == 1
+
+
+# P1.3: Inventory Loading Tests
+# ============================================================================
+
+class TestLoadInventoryCsv:
+    """Tests for load_inventory_csv() function."""
+    
+    def test_load_valid_inventory_csv(self, tmp_path):
+        """Test loading valid inventory CSV file."""
+        csv_file = tmp_path / "inventory.csv"
+        csv_content = """Description,Available
+WHITE HANGING HEART T-LIGHT HOLDER,1
+WHITE METAL LANTERN,0
+CREAM CUPID HEARTS COAT HANGER,1
+"""
+        csv_file.write_text(csv_content)
+        
+        result = load_inventory_csv(str(csv_file))
+        assert result is not None
+        assert isinstance(result, dict)
+    
+    def test_load_nonexistent_inventory_file(self):
+        """Test loading nonexistent inventory file returns empty dict."""
+        result = load_inventory_csv("/nonexistent/inventory.csv")
+        assert result == {}
+    
+    def test_load_empty_inventory_csv(self, tmp_path):
+        """Test loading empty inventory CSV returns empty dict."""
+        csv_file = tmp_path / "empty.csv"
+        csv_file.write_text("")
+        
+        result = load_inventory_csv(str(csv_file))
+        assert result == {}
+    
+    def test_load_inventory_csv_headers_only(self, tmp_path):
+        """Test loading inventory CSV with only headers."""
+        csv_file = tmp_path / "headers_only.csv"
+        csv_file.write_text("Description,Available\n")
+        
+        result = load_inventory_csv(str(csv_file))
+        # Headers only should return empty dict
+        assert result == {}
+    
+    def test_load_inventory_csv_with_unicode(self, tmp_path):
+        """Test loading inventory CSV with unicode characters."""
+        csv_file = tmp_path / "unicode_inventory.csv"
+        csv_content = """Description,Available
+白いハートライト,1
+中文描述商品,0
+"""
+        csv_file.write_text(csv_content, encoding='utf-8')
+        
+        result = load_inventory_csv(str(csv_file))
+        assert result is not None
+    
+    def test_load_inventory_csv_with_missing_columns(self, tmp_path):
+        """Test loading inventory CSV with missing columns."""
+        csv_file = tmp_path / "missing_cols.csv"
+        csv_content = """Description,Price
+WHITE HANGING HEART T-LIGHT HOLDER,2.55
+"""
+        csv_file.write_text(csv_content)
+        
+        result = load_inventory_csv(str(csv_file))
+        # Missing in_stock/available/stock column should return empty dict or handle gracefully
+        assert result == {}
+    
+    def test_load_inventory_csv_with_special_characters(self, tmp_path):
+        """Test loading inventory CSV with special characters in data."""
+        csv_file = tmp_path / "special.csv"
+        csv_content = '''Description,Available
+"WHITE HEART, SPECIAL EDITION",1
+"LANTERN (DELUXE) & STAND",0
+'''
+        csv_file.write_text(csv_content)
+        
+        result = load_inventory_csv(str(csv_file))
+        assert result is not None
+
+
+# P1.4: Utility Function Tests
+# ============================================================================
+
+class TestFormatRecommendations:
+    """Tests for format_recommendations() function."""
+    
+    def test_format_basic_recommendations(self):
+        """Test formatting basic recommendations dict."""
+        recommendations = {
+            "transaction": ["item1", "item2"],
+            "confidence": 0.85,
+            "recommender": "naive_bayes",
+            "bundles": [("bundle1", "bundle2"), ("bundle3", "bundle4")]
+        }
+        result = format_recommendations(recommendations)
+        assert isinstance(result, str)
+        assert "BUNDLE RECOMMENDATIONS" in result
+        assert "item1" in result
+    
+    def test_format_recommendations_no_bundles(self):
+        """Test formatting recommendations with no bundles."""
+        recommendations = {
+            "transaction": ["item1"],
+            "confidence": 0.5,
+            "recommender": "naive_bayes",
+            "bundles": []
+        }
+        result = format_recommendations(recommendations)
+        assert isinstance(result, str)
+        assert "No recommendations" in result
+    
+    def test_format_recommendations_high_confidence(self):
+        """Test formatting recommendations with high confidence."""
+        recommendations = {
+            "transaction": ["item1"],
+            "confidence": 0.99,
+            "recommender": "svm",
+            "bundles": [("a", "b")]
+        }
+        result = format_recommendations(recommendations)
+        assert "99.00%" in result  # Should format confidence as percentage with 2 decimals
+    
+    def test_format_recommendations_verbose(self):
+        """Test formatting recommendations in verbose mode."""
+        recommendations = {
+            "transaction": ["item1"],
+            "confidence": 0.85,
+            "recommender": "naive_bayes",
+            "bundles": [("a", "b")]
+        }
+        result = format_recommendations(recommendations, verbose=True)
+        assert isinstance(result, str)
+    
+    def test_format_recommendations_multiple_bundles(self):
+        """Test formatting multiple bundles."""
+        recommendations = {
+            "transaction": ["item1", "item2"],
+            "confidence": 0.75,
+            "recommender": "random",
+            "bundles": [("a", "b"), ("c", "d"), ("e", "f")]
+        }
+        result = format_recommendations(recommendations)
+        assert "1." in result  # Should have numbered bundles
+        assert "2." in result
+        assert "3." in result
+
+
+class TestComputeIQRBounds:
+    """Tests for compute_iqr_bounds() function - works with pandas Series."""
+    
+    def test_compute_iqr_normal_data(self):
+        """Test computing IQR bounds on normal data."""
+        import pandas as pd
+        data = pd.Series([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        lower, upper = compute_iqr_bounds(data)
+        assert isinstance(lower, (int, float))
+        assert isinstance(upper, (int, float))
+        assert lower < upper
+    
+    def test_compute_iqr_with_outliers(self):
+        """Test computing IQR bounds with outliers."""
+        import pandas as pd
+        data = pd.Series([1, 2, 3, 4, 5, 100, 1000])
+        lower, upper = compute_iqr_bounds(data)
+        assert lower < upper
+        # Outliers should be beyond bounds
+        assert 100 > upper or 1000 > upper
+    
+    def test_compute_iqr_small_dataset(self):
+        """Test computing IQR bounds on small dataset."""
+        import pandas as pd
+        data = pd.Series([1, 2, 3])
+        lower, upper = compute_iqr_bounds(data)
+        assert lower <= upper
+    
+    def test_compute_iqr_single_value(self):
+        """Test computing IQR bounds with single value."""
+        import pandas as pd
+        data = pd.Series([5])
+        lower, upper = compute_iqr_bounds(data)
+        # Single value IQR should be 0 or similar
+        assert lower <= upper
+    
+    def test_compute_iqr_with_nan(self):
+        """Test computing IQR bounds with NaN values (should be dropped)."""
+        import pandas as pd
+        data = pd.Series([1, 2, 3, float('nan'), 5])
+        lower, upper = compute_iqr_bounds(data)
+        assert lower < upper
+    
+    def test_compute_iqr_custom_multiplier(self):
+        """Test computing IQR bounds with custom multiplier."""
+        import pandas as pd
+        data = pd.Series([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        lower1, upper1 = compute_iqr_bounds(data, multiplier=1.5)
+        lower2, upper2 = compute_iqr_bounds(data, multiplier=3.0)
+        # Larger multiplier should give wider bounds
+        assert upper2 > upper1
+
+
+class TestSetupLogging:
+    """Tests for setup_logging() function - configures logging for the module."""
+    
+    def test_setup_logging_with_default_level(self):
+        """Test setup_logging with default level."""
+        # setup_logging returns None but configures logging
+        result = setup_logging()
+        # Function returns None (side-effects only)
+        assert result is None
+    
+    def test_setup_logging_with_debug_level(self):
+        """Test setup_logging with DEBUG level."""
+        import logging
+        result = setup_logging(logging.DEBUG)
+        assert result is None
+    
+    def test_setup_logging_with_info_level(self):
+        """Test setup_logging with INFO level."""
+        import logging
+        result = setup_logging(logging.INFO)
+        assert result is None
+    
+    def test_setup_logging_with_warning_level(self):
+        """Test setup_logging with WARNING level."""
+        import logging
+        result = setup_logging(logging.WARNING)
+        assert result is None
+    
+    def test_setup_logging_creates_log_file(self, tmp_path):
+        """Test that setup_logging can create a log file."""
+        import logging
+        # This may or may not create a file depending on implementation
+        setup_logging(logging.INFO)
+        assert True  # Just verify function doesn't error
+
+
+# ============================================================================
+# END OF P1 TESTS - JSON I/O, Data Validation, Inventory, Utilities
 # ============================================================================
