@@ -48,11 +48,13 @@ make test-html
 pytest tests/test_data_pipeline.py -v
 pytest tests/test_recommendation_engine.py -v
 pytest tests/test_llm_integration.py -v
+pytest tests/test_api.py -v
 
 # Specific test class
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics -v
 pytest tests/test_recommendation_engine.py::TestNaiveBayesRecommender -v
 pytest tests/test_llm_integration.py::TestSelectAlternativesWithLLM -v
+pytest tests/test_api.py::TestBundlesEndpoint -v
 
 # Specific test function
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics::test_initialization_defaults -v
@@ -594,6 +596,203 @@ pytest tests/test_llm_integration.py -v  # 19 passed, 3 skipped
 USE_REAL_LLM=true LLM_BUDGET_LIMIT=3 pytest tests/test_llm_integration.py::TestRealLLMCalls -v
 ```
 
+#### ✅ TestHealthEndpoint (Implemented)
+Tests health check endpoint for service availability monitoring.
+
+```python
+def test_health_returns_ok(self, client):
+    """Test health endpoint returns 200 with status ok."""
+    response = client.get('/health')
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert data['status'] == 'ok'
+
+def test_health_response_structure(self, client):
+    """Test health response has correct structure."""
+    # Verify JSON structure matches API contract
+```
+
+#### ✅ TestRecommendersEndpoint (Implemented)
+Tests GET /api/v1/recommenders endpoint for listing available models.
+
+```python
+def test_recommenders_returns_success(self, client, mock_get_engine):
+    """Test recommenders endpoint returns list of available models."""
+    response = client.get('/api/v1/recommenders')
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert data['status'] == 'success'
+
+def test_recommenders_list_contains_models(self, client, mock_get_engine):
+    """Test recommenders list includes naive_bayes and svm."""
+    # Verify all configured models are returned
+
+def test_recommenders_model_loading_failure(self, client):
+    """Test graceful error handling when engine fails to load."""
+    # Mock engine loading failure, verify 500 response
+```
+
+#### ✅ TestBundlesEndpoint (Implemented)
+Tests POST /api/v1/bundles endpoint for product bundle recommendations.
+
+```python
+def test_bundles_successful_request(self, client, mock_get_engine):
+    """Test bundles endpoint with valid product_description."""
+    response = client.post('/api/v1/bundles', 
+        json={'product_description': 'laptop'})
+    assert response.status_code == 200
+
+def test_bundles_with_custom_threshold(self, client, mock_get_engine):
+    """Test bundles with custom confidence threshold."""
+    response = client.post('/api/v1/bundles',
+        json={'product_description': 'laptop', 'threshold': 0.7})
+    # Verify threshold parameter is respected
+
+def test_bundles_missing_product_description(self, client, mock_get_engine):
+    """Test error handling for missing required field."""
+    response = client.post('/api/v1/bundles', json={})
+    assert response.status_code == 400
+
+def test_bundles_invalid_threshold_below_range(self, client, mock_get_engine):
+    """Test validation: threshold must be >= 0.0."""
+    response = client.post('/api/v1/bundles',
+        json={'product_description': 'laptop', 'threshold': -0.1})
+    assert response.status_code == 400
+
+def test_bundles_invalid_threshold_above_range(self, client, mock_get_engine):
+    """Test validation: threshold must be <= 1.0."""
+    response = client.post('/api/v1/bundles',
+        json={'product_description': 'laptop', 'threshold': 1.5})
+    assert response.status_code == 400
+```
+
+#### ✅ TestBundlesBatchEndpoint (Implemented)
+Tests POST /api/v1/bundles/batch for bulk recommendations.
+
+```python
+def test_batch_successful_request(self, client, mock_get_engine):
+    """Test batch processing of multiple product descriptions."""
+    payload = {
+        'product_descriptions': ['laptop', 'mouse', 'keyboard'],
+        'threshold': 0.5
+    }
+    response = client.post('/api/v1/bundles/batch', json=payload)
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['results']) == 3
+
+def test_batch_empty_list(self, client, mock_get_engine):
+    """Test error handling for empty product list."""
+    response = client.post('/api/v1/bundles/batch',
+        json={'product_descriptions': []})
+    assert response.status_code == 400
+
+def test_batch_exceeds_max_items(self, client, mock_get_engine):
+    """Test validation: batch size limit enforcement."""
+    # Verify max batch size constraint (e.g., 100 items)
+```
+
+#### ✅ TestCrossSellEndpoint (Implemented)
+Tests GET /api/v1/cross-sell endpoint for product recommendations.
+
+```python
+def test_cross_sell_successful_request(self, client, mock_get_engine):
+    """Test cross-sell recommendations."""
+    response = client.get('/api/v1/cross-sell?product_description=laptop')
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert 'recommendations' in data
+
+def test_cross_sell_with_top_n(self, client, mock_get_engine):
+    """Test cross-sell with custom top_n parameter."""
+    response = client.get('/api/v1/cross-sell?product_description=laptop&top_n=5')
+    # Verify limited number of recommendations returned
+
+def test_cross_sell_missing_product(self, client, mock_get_engine):
+    """Test error handling when product_description is missing."""
+    response = client.get('/api/v1/cross-sell')
+    assert response.status_code == 400
+```
+
+#### ✅ TestStatsEndpoint (Implemented)
+Tests GET /api/v1/stats for engine statistics.
+
+```python
+def test_stats_successful_request(self, client, mock_get_engine):
+    """Test stats endpoint returns engine metrics."""
+    response = client.get('/api/v1/stats')
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert 'num_recommenders' in data
+    assert 'num_bundles' in data
+
+def test_stats_response_structure(self, client, mock_get_engine):
+    """Test stats response has all required fields."""
+    # Verify complete statistics structure
+```
+
+#### ✅ TestStaticFileServing (Implemented)
+Tests serving of static web UI files.
+
+```python
+def test_index_html_served(self, client):
+    """Test that index.html is served at root path."""
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'html' in response.data
+
+def test_static_css_served(self, client):
+    """Test CSS files are accessible."""
+    # Verify static asset serving
+
+def test_nonexistent_static_file_404(self, client):
+    """Test 404 for missing static files."""
+    response = client.get('/nonexistent.js')
+    assert response.status_code == 404
+```
+
+#### ✅ TestErrorHandlers (Implemented)
+Tests global error handling and custom error responses.
+
+```python
+def test_404_error_handler(self, client):
+    """Test custom 404 error response."""
+    response = client.get('/api/v1/nonexistent')
+    assert response.status_code == 404
+    data = json.loads(response.data)
+    assert data['status'] == 'error'
+
+def test_500_error_handler(self, client):
+    """Test internal server error handling."""
+    # Mock internal error, verify 500 response structure
+```
+
+#### ✅ TestResponseValidation (Implemented)
+Tests API response format consistency.
+
+```python
+def test_success_response_format(self, client, mock_get_engine):
+    """Test all success responses follow standard format."""
+    # Verify {status: 'success', data: {...}} structure
+
+def test_error_response_format(self, client):
+    """Test all error responses follow standard format."""
+    # Verify {status: 'error', message: '...'} structure
+```
+
+#### ✅ TestJSONSerialization (Implemented)
+Tests JSON encoding/decoding for API requests and responses.
+
+```python
+def test_numpy_arrays_serialized(self, client, mock_get_engine):
+    """Test numpy arrays are correctly serialized to JSON."""
+    # Verify numpy data types handled in responses
+
+def test_special_characters_in_json(self, client, mock_get_engine):
+    """Test Unicode and special characters in JSON."""
+    # Verify proper encoding of non-ASCII characters
+```
+
 ### Test Statistics
 
 **Total Test Cases: 125**
@@ -623,10 +822,21 @@ USE_REAL_LLM=true LLM_BUDGET_LIMIT=3 pytest tests/test_llm_integration.py::TestR
 | ResponseStructure | 2 | ✅ |
 | RealLLMCalls (opt-in) | 3 | ✅ (skipped) |
 | **Subtotal** | **22** | **✅** |
-| **TOTAL IMPLEMENTED** | **128** | **✅** |
+| **API Endpoint Tests** | | |
+| HealthEndpoint | 2 | ✅ |
+| RecommendersEndpoint | 4 | ✅ |
+| BundlesEndpoint | 11 | ✅ |
+| BundlesBatchEndpoint | 8 | ✅ |
+| CrossSellEndpoint | 5 | ✅ |
+| StatsEndpoint | 3 | ✅ |
+| StaticFileServing | 3 | ✅ |
+| ErrorHandlers | 2 | ✅ |
+| ResponseValidation | 3 | ✅ |
+| JSONSerialization | 2 | ✅ |
+| **Subtotal** | **43** | **✅** |
+| **TOTAL IMPLEMENTED** | **171** | **✅** |
 
 **Planned for P0 completion:**
-- API tests: 18+
 - Utilities tests: 12+
 | SVMRecommender | 15 | ✅ |
 | BundleRecommendationEngine | 30 | ✅ |
@@ -691,6 +901,16 @@ pytest tests/test_llm_integration.py -m "llm" -v  # All LLM tests (mocked)
 USE_REAL_LLM=true pytest tests/test_llm_integration.py::TestRealLLMCalls -v  # All 3 real tests
 USE_REAL_LLM=true LLM_BUDGET_LIMIT=3 pytest tests/test_llm_integration.py::TestRealLLMCalls::test_real_openai_call_minimal -v  # Single provider
 pytest tests/test_llm_integration.py -m "llm_real" -v  # All real LLM tests
+
+# API Endpoint tests (Flask test client, all endpoints)
+pytest tests/test_api.py -v  # All API tests
+pytest tests/test_api.py::TestHealthEndpoint -v  # Health check only
+pytest tests/test_api.py::TestBundlesEndpoint -v  # Bundle recommendations
+pytest tests/test_api.py::TestBundlesBatchEndpoint -v  # Batch processing
+pytest tests/test_api.py::TestCrossSellEndpoint -v  # Cross-sell recommendations
+pytest tests/test_api.py::TestStatsEndpoint -v  # Engine statistics
+pytest tests/test_api.py::TestErrorHandlers -v  # Error handling
+make test-file FILE=tests/test_api.py
 
 # Previously failed tests
 make test-failed
@@ -767,6 +987,252 @@ class TestFullPipeline:
 
 ---
 
+## API Endpoint Testing
+
+### Flask Test Client Pattern
+
+API tests use Flask's built-in test client for endpoint testing without starting a real server:
+
+```python
+@pytest.fixture
+def client():
+    """Flask test client for API testing."""
+    app.config['TESTING'] = True
+    with app.test_client() as test_client:
+        yield test_client
+
+def test_health_endpoint(client):
+    """Test using Flask test client."""
+    response = client.get('/health')
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert data['status'] == 'ok'
+```
+
+**Benefits:**
+- ✅ No server startup required
+- ✅ Fast execution (in-process testing)
+- ✅ Full request/response inspection
+- ✅ Isolated from network issues
+
+### Mocking the Recommendation Engine
+
+API tests mock the `BundleRecommendationEngine` to avoid dependencies on trained models:
+
+```python
+@pytest.fixture
+def mock_engine():
+    """Mock BundleRecommendationEngine with typical response structure."""
+    engine = MagicMock()
+    
+    # Mock recommenders
+    engine.recommenders = {
+        "naive_bayes": MagicMock(name="NaiveBayesBundleRecommender"),
+        "svm": MagicMock(name="SVMBundleRecommender")
+    }
+    
+    # Mock recommend_bundles response
+    engine.recommend_bundles.return_value = {
+        "bundles": [["mouse", "keyboard"], ["mouse", "usb_cable"]],
+        "confidence": 0.825,
+        "recommender": "naive_bayes",
+        "transaction": ["laptop"]
+    }
+    
+    return engine
+
+@pytest.fixture
+def mock_get_engine(mock_engine):
+    """Patch get_engine() to return mock engine."""
+    with patch('src.api.get_engine', return_value=mock_engine):
+        yield mock_engine
+
+def test_bundles_endpoint(client, mock_get_engine):
+    """Test bundles endpoint with mocked engine."""
+    response = client.post('/api/v1/bundles',
+        json={'product_description': 'laptop'})
+    assert response.status_code == 200
+```
+
+### Testing Different HTTP Methods
+
+```python
+# GET request with query parameters
+def test_get_with_params(client, mock_get_engine):
+    """Test GET endpoint with query parameters."""
+    response = client.get('/api/v1/cross-sell?product_description=laptop&top_n=5')
+    assert response.status_code == 200
+
+# POST request with JSON body
+def test_post_with_json(client, mock_get_engine):
+    """Test POST endpoint with JSON payload."""
+    response = client.post('/api/v1/bundles',
+        json={'product_description': 'laptop', 'threshold': 0.7})
+    assert response.status_code == 200
+
+# Verify request was processed correctly
+def test_verify_mock_called(client, mock_get_engine):
+    """Verify mock engine was called with correct parameters."""
+    client.post('/api/v1/bundles',
+        json={'product_description': 'laptop'})
+    
+    # Verify recommend_bundles was called
+    mock_get_engine.recommend_bundles.assert_called_once()
+```
+
+### Input Validation Testing
+
+Test API parameter validation for robustness:
+
+```python
+def test_missing_required_field(client):
+    """Test error when required field is missing."""
+    response = client.post('/api/v1/bundles', json={})
+    assert response.status_code == 400
+    data = json.loads(response.data)
+    assert data['status'] == 'error'
+    assert 'product_description' in data['message']
+
+def test_invalid_threshold_range(client):
+    """Test threshold validation (must be 0.0-1.0)."""
+    response = client.post('/api/v1/bundles',
+        json={'product_description': 'laptop', 'threshold': 1.5})
+    assert response.status_code == 400
+
+def test_invalid_data_type(client):
+    """Test type validation."""
+    response = client.post('/api/v1/bundles',
+        json={'product_description': 'laptop', 'threshold': 'high'})
+    assert response.status_code == 400
+```
+
+### Response Format Testing
+
+Ensure consistent API response structure:
+
+```python
+def test_success_response_structure(client, mock_get_engine):
+    """Test successful response has standard format."""
+    response = client.post('/api/v1/bundles',
+        json={'product_description': 'laptop'})
+    data = json.loads(response.data)
+    
+    # Standard success format
+    assert 'status' in data
+    assert data['status'] == 'success'
+    assert 'data' in data or 'bundles' in data
+
+def test_error_response_structure(client):
+    """Test error response has standard format."""
+    response = client.post('/api/v1/bundles', json={})
+    data = json.loads(response.data)
+    
+    # Standard error format
+    assert data['status'] == 'error'
+    assert 'message' in data
+    assert isinstance(data['message'], str)
+```
+
+### Batch Endpoint Testing
+
+Test bulk processing capabilities:
+
+```python
+def test_batch_multiple_items(client, mock_get_engine):
+    """Test batch processing of multiple items."""
+    payload = {
+        'product_descriptions': ['laptop', 'mouse', 'keyboard'],
+        'threshold': 0.5
+    }
+    response = client.post('/api/v1/bundles/batch', json=payload)
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['results']) == 3
+
+def test_batch_size_limit(client, mock_get_engine):
+    """Test batch size limit enforcement."""
+    # Create list exceeding max batch size
+    large_batch = ['item' + str(i) for i in range(101)]
+    response = client.post('/api/v1/bundles/batch',
+        json={'product_descriptions': large_batch})
+    assert response.status_code == 400
+```
+
+### Error Handling Testing
+
+Test graceful error handling:
+
+```python
+def test_engine_loading_failure(client):
+    """Test API behavior when engine fails to load."""
+    with patch('src.api.get_engine', side_effect=Exception("Model load failed")):
+        response = client.get('/api/v1/recommenders')
+        assert response.status_code == 500
+        data = json.loads(response.data)
+        assert data['status'] == 'error'
+
+def test_404_not_found(client):
+    """Test custom 404 error handler."""
+    response = client.get('/api/v1/nonexistent')
+    assert response.status_code == 404
+    data = json.loads(response.data)
+    assert data['status'] == 'error'
+```
+
+### CORS Testing
+
+Test Cross-Origin Resource Sharing headers:
+
+```python
+def test_cors_headers_present(client, mock_get_engine):
+    """Test CORS headers are included in responses."""
+    response = client.get('/api/v1/recommenders')
+    assert 'Access-Control-Allow-Origin' in response.headers
+
+def test_preflight_request(client):
+    """Test OPTIONS preflight request handling."""
+    response = client.options('/api/v1/bundles')
+    assert response.status_code == 200
+    assert 'Access-Control-Allow-Methods' in response.headers
+```
+
+### Static File Serving
+
+Test web UI static file serving:
+
+```python
+def test_index_html_at_root(client):
+    """Test index.html is served at root path."""
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'html' in response.data
+
+def test_static_assets_accessible(client):
+    """Test static CSS/JS files are accessible."""
+    # Test CSS
+    response = client.get('/static/style.css')
+    # Verify content type or status
+```
+
+### Running API Tests
+
+```bash
+# All API tests
+pytest tests/test_api.py -v
+
+# Specific endpoint class
+pytest tests/test_api.py::TestBundlesEndpoint -v
+pytest tests/test_api.py::TestHealthEndpoint -v
+
+# With coverage
+pytest tests/test_api.py -v --cov=src.api --cov-report=term-missing
+
+# Verbose debugging
+pytest tests/test_api.py::TestBundlesEndpoint::test_bundles_successful_request -vv -s
+```
+
+---
+
 ## Performance Benchmarks
 
 ### Expected Test Execution Time
@@ -777,8 +1243,10 @@ class TestFullPipeline:
 | Unit tests (LLM mocked) | ~5-10s | With mock LLM overhead |
 | Data pipeline tests | ~8-12s | 44 tests, synthetic data |
 | Recommendation engine tests | ~12-15s | 62 tests, NB + SVM + Engine |
-| All implemented tests | ~20-27s | 106 tests total |
-| All tests (P0 complete) | ~45-60s | ~150 tests total |
+| LLM integration tests | ~5-8s | 22 tests, all mocked |
+| API endpoint tests | ~3-5s | 43 tests, Flask test client |
+| All implemented tests | ~28-40s | 171 tests total |
+| All tests (P0 complete) | ~35-50s | ~183 tests total |
 
 ### Memory Usage
 
