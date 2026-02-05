@@ -400,6 +400,39 @@ When modifying multiple files:
 Use multi_replace_string_in_file for atomicity
 ```
 
+### 4.5 Environment Setup
+
+**Virtual Environment Best Practice**
+- **Always activate the project's virtual environment** before running code or tests
+- This ensures imports, dependencies, and tests align with the project's requirements
+
+**Check for venv:**
+```bash
+# Look for venv directory
+ls -la | grep venv
+
+# If exists, activate it:
+source venv/bin/activate  # Linux/Mac
+# or
+venv\Scripts\activate  # Windows
+```
+
+**Why This Matters for AI Agents:**
+- Import validation reflects actual project dependencies
+- Test execution uses correct package versions
+- Prevents false positives/negatives from system Python packages
+- Commands like `pytest` and `python` use project-specific versions
+- Ensures `get_python_environment_details` returns accurate information
+
+**Workflow Integration:**
+```
+Before running any Python commands:
+1. Check if venv exists in project
+2. Activate venv if present
+3. Verify activation: `which python` should point to venv
+4. Then proceed with testing/development
+```
+
 ---
 
 ## 5. Common Patterns & Anti-Patterns
@@ -561,9 +594,75 @@ tests/         # Test suite
 
 ---
 
-## 9. Testing Best Practices
+## 9. Version Control Best Practices
 
-### 9.1 Test Organization
+### 9.1 Git Commit Messages
+
+**Structure:**
+```
+<type>: <subject>
+
+<body>
+
+<footer>
+```
+
+**Commit Types:**
+- `feat:` New feature
+- `fix:` Bug fix
+- `docs:` Documentation changes
+- `test:` Adding or updating tests
+- `refactor:` Code refactoring
+- `perf:` Performance improvements
+- `chore:` Build process, dependencies, or tooling
+
+**Best Practices:**
+- ✅ Use descriptive, imperative mood ("Add feature" not "Added feature")
+- ✅ Keep subject line under 72 characters
+- ✅ Use body to explain what and why, not how
+- ✅ Reference issue numbers in footer (e.g., "Fixes #123")
+- ❌ **Do NOT use emoticons or emojis** (keeps commits professional and searchable)
+- ❌ Do NOT use vague messages ("fix stuff", "updates", "wip")
+
+**Examples:**
+
+Good:
+```
+feat: Add API endpoint testing documentation to TESTING_GUIDE.md
+
+Add comprehensive instructions for testing Flask API endpoints including
+test patterns, mocking strategies, and command examples.
+
+Updates Test Statistics table from 128 to 171 total tests.
+```
+
+Bad:
+```
+✨ Add cool new stuff 🚀
+
+Updated some files
+```
+
+### 9.2 Branch Naming
+
+**Patterns:**
+- `feature/<description>` - New features
+- `fix/<description>` - Bug fixes
+- `test/<description>` - Test additions
+- `docs/<description>` - Documentation
+- `refactor/<description>` - Code refactoring
+
+**QA/Integration Branches:**
+- `qa` - Quality assurance branch
+- `staging` - Pre-production environment
+- `integration` - Feature integration
+- `develop` - Main development branch (Git Flow)
+
+---
+
+## 10. Testing Best Practices
+
+### 10.1 Test Organization
 
 ```python
 class TestBundleRecommendationEngine:
@@ -586,7 +685,7 @@ class TestBundleRecommendationEngine:
         assert "std_accuracy" in metrics["model_name"]
 ```
 
-### 9.2 Integration Tests
+### 10.2 Integration Tests
 
 **Test Real Workflows:**
 ```python
@@ -619,7 +718,7 @@ def test_end_to_end_recommendation_workflow():
 
 ---
 
-## 10. References & Resources
+## 11. References & Resources
 
 **Python Standards:**
 - PEP 8: Style Guide
