@@ -80,15 +80,25 @@
   - **Acceptance Criteria:** ✅ All tests pass; coverage ≥ 80% (achieved 80%)
   - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md), [README.md](README.md) updated with Flask references
 
-- [ ] **Unit Tests: Data Utilities & Helpers** (P0)
-  - **File:** [tests/test_utils.py](tests/test_utils.py) (create new)
+- [ ] **Unit Tests: Data Utilities & Helpers** (P0) ⏳ IN PROGRESS
+  - **File:** [tests/test_utils.py](tests/test_utils.py) ✅ Created
   - **Tasks:**
-    - Test `normalize_description()` with special characters, edge cases
-    - Test `extract_contexts_with_llm()` and caching
-    - Test LLM batch processing functions
-    - Test error handling for malformed inputs
-    - Test cache read/write operations (JSON persistence)
-  - **Acceptance Criteria:** All tests pass; coverage ≥ 75%
+    - ✅ Test `normalize_description_basic()` with special characters, edge cases, unicode
+    - ✅ Test `extract_contexts_with_llm()` with all 5 LLM providers (mocked)
+    - ✅ Test LLM batch processing with deduplication and error handling
+    - ✅ Test error handling for malformed inputs (JSON, CSV, missing files)
+    - ✅ Test cache read/write operations and JSON persistence
+    - ✅ Test data validation (transactions, inventory, alias maps)
+    - ✅ Test utility functions (formatting, IQR bounds, logging setup)
+  - **Status:** 107 tests implemented, 107/107 passing (100%)
+  - **Coverage:** 50% of src/utils.py (284/540 statements); target: 75%
+  - **Gap:** 25% (135 statements) - Uncovered functions: normalize_description_with_llm, select_alternatives_with_llm, load_and_render_prompt, load_json_schema, HTTP wrappers
+  - **Test Classes:** 14 (5 P0 LLM integration + 9 P1 JSON I/O & validation)
+  - **Execution Time:** ~13-15 seconds
+  - **Framework:** pytest with @patch('urllib.request.urlopen') mocking for HTTP calls
+  - **Acceptance Criteria:** ❌ Coverage target NOT MET (50% vs 75% required)
+  - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md) section updated with comprehensive test_utils.py documentation, code examples, and fixtures
+  - **Next Steps:** P2 tests needed for advanced functions to reach 75% coverage target
 
 ---
 
