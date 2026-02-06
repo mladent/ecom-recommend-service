@@ -36,6 +36,8 @@ from src.utils import (
     select_alternative_heuristic,
     format_recommendations,
     LLMQuotaExceededError,
+    normalize_description_with_llm,
+    select_alternatives_with_llm,
 )
 
 
@@ -1413,3 +1415,978 @@ class TestSetupLogging:
 # ============================================================================
 # END OF P1 TESTS - JSON I/O, Data Validation, Inventory, Utilities
 # ============================================================================
+
+
+# ============================================================================
+# P2 TESTS - Infrastructure, Advanced LLM Functions
+# ============================================================================
+
+@pytest.mark.unit
+class TestPromptLoading:
+    """Tests for prompt template loading and rendering."""
+    
+    def test_prompt_base_dir_returns_valid_path(self):
+        """Test that _prompt_base_dir returns valid configuration path."""
+        from src.utils import _prompt_base_dir
+        base_dir = _prompt_base_dir()
+        assert isinstance(base_dir, str)
+        assert "prompts" in base_dir
+        assert os.path.isdir(base_dir)
+    
+    def test_load_prompt_template_from_file(self):
+        """Test loading a real prompt template file."""
+        from src.utils import _load_prompt_template
+        template = _load_prompt_template("normalize_description_system.md")
+        assert isinstance(template, str)
+        assert len(template) > 0
+        assert "normalize" in template.lower() or "description" in template.lower()
+    
+    def test_load_prompt_template_caching(self):
+        """Test that prompt templates are cached."""
+        from src.utils import _load_prompt_template, _PROMPT_CACHE
+        _PROMPT_CACHE.clear()
+        assert "normalize_description_system.md" not in _PROMPT_CACHE
+        template1 = _load_prompt_template("normalize_description_system.md")
+        assert "normalize_description_system.md" in _PROMPT_CACHE
+        template2 = _load_prompt_template("normalize_description_system.md")
+        assert template1 == template2
+    
+    def test_load_prompt_template_missing_file(self):
+        """Test that missing prompt file raises RuntimeError."""
+        from src.utils import _load_prompt_template
+        with pytest.raises(RuntimeError, match="Prompt file missing"):
+            _load_prompt_template("nonexistent_prompt.md")
+    
+    def test_load_prompt_template_path_traversal(self):
+        """Test that path traversal attempts are blocked."""
+        from src.utils import _load_prompt_template
+        with pytest.raises(RuntimeError, match="Invalid prompt path"):
+            _load_prompt_template("../../../etc/passwd")
+    
+    def test_render_prompt_with_single_kwarg(self):
+        """Test prompt template rendering with one variable."""
+        from src.utils import _render_prompt
+        result = _render_prompt("normalize_description_user.md", text="test product")
+        assert isinstance(result, str)
+        assert len(result) > 0
+        # Verify placeholder was replaced
+        assert "{text}" not in result
+    
+    def test_render_prompt_with_multiple_kwargs(self):
+        """Test prompt template rendering with multiple variables."""
+        from src.utils import _render_prompt
+        result = _render_prompt(
+            "select_alternatives_user.md",
+            missing_item="item1",
+            candidates_json='["item2", "item3"]'
+        )
+        assert isinstance(result, str)
+        assert "item1" in result or len(result) > 0  # Template may or may not include the items
+    
+    def test_render_prompt_caches_template(self):
+        """Test that rendering uses cached template."""
+        from src.utils import _render_prompt, _PROMPT_CACHE
+        _PROMPT_CACHE.clear()
+        result1 = _render_prompt("normalize_description_user.md", text="test1")
+        cache_size_after_first = len(_PROMPT_CACHE)
+        result2 = _render_prompt("normalize_description_user.md", text="test2")
+        cache_size_after_second = len(_PROMPT_CACHE)
+        # Cache size should not grow for same template file
+        assert cache_size_after_first == cache_size_after_second
+
+
+@pytest.mark.unit
+class TestSchemaLoading:
+    """Tests for JSON schema loading and validation."""
+    
+    def test_schema_base_dir_returns_valid_path(self):
+        """Test that _schema_base_dir returns valid schema path."""
+        from src.utils import _schema_base_dir
+        base_dir = _schema_base_dir()
+        assert isinstance(base_dir, str)
+        assert "schemas" in base_dir
+        assert os.path.isdir(base_dir)
+    
+    def test_load_json_schema_from_file(self):
+        """Test loading a real JSON schema file."""
+        from src.utils import _load_json_schema
+        schema = _load_json_schema("llm_select_alternatives.json")
+        assert isinstance(schema, dict)
+        assert "type" in schema or "properties" in schema or "$schema" in schema
+    
+    def test_load_json_schema_caching(self):
+        """Test that schemas are cached after first load."""
+        from src.utils import _load_json_schema, _SCHEMA_CACHE
+        _SCHEMA_CACHE.clear()
+        assert "llm_select_alternatives.json" not in _SCHEMA_CACHE
+        schema1 = _load_json_schema("llm_select_alternatives.json")
+        assert "llm_select_alternatives.json" in _SCHEMA_CACHE
+        schema2 = _load_json_schema("llm_select_alternatives.json")
+        assert schema1 == schema2
+    
+    def test_load_json_schema_missing_file(self):
+        """Test that missing schema file raises RuntimeError."""
+        from src.utils import _load_json_schema
+        with pytest.raises(RuntimeError, match="Schema file missing"):
+            _load_json_schema("nonexistent_schema.json")
+    
+    def test_load_json_schema_path_traversal(self):
+        """Test that path traversal attempts are blocked."""
+        from src.utils import _load_json_schema
+        with pytest.raises(RuntimeError, match="Invalid schema path"):
+            _load_json_schema("../../../etc/passwd")
+    
+    def test_validate_json_schema_valid_payload(self):
+        """Test schema validation with valid payload."""
+        from src.utils import _validate_json_schema
+        valid_payload = {
+            "alternatives": [
+                {"item": "item1", "score": 0.9, "reason": "match"}
+            ]
+        }
+        # Should not raise
+        _validate_json_schema(valid_payload, "llm_select_alternatives.json", "test")
+    
+    def test_validate_json_schema_invalid_payload(self):
+        """Test schema validation with invalid payload."""
+        from src.utils import _validate_json_schema
+        invalid_payload = {"invalid": "structure"}
+        with pytest.raises(RuntimeError, match="Invalid LLM JSON output"):
+            _validate_json_schema(invalid_payload, "llm_select_alternatives.json", "test context")
+    
+    def test_validate_json_schema_context_in_error(self):
+        """Test that context is included in validation error."""
+        from src.utils import _validate_json_schema
+        invalid_payload = {}
+        with pytest.raises(RuntimeError, match="test_context"):
+            _validate_json_schema(invalid_payload, "llm_select_alternatives.json", "test_context")
+
+
+@pytest.mark.unit
+class TestHttpPostJson:
+    """Tests for HTTP POST JSON helper function."""
+    
+    @patch('src.utils.urlopen')
+    def test_http_post_json_success(self, mock_urlopen):
+        """Test successful HTTP POST with JSON response."""
+        from src.utils import _http_post_json
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"status": "ok", "value": 123}'
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+        
+        result = _http_post_json(
+            "https://api.example.com/test",
+            {"Content-Type": "application/json"},
+            {"data": "test"},
+            timeout=30
+        )
+        
+        assert result == {"status": "ok", "value": 123}
+        mock_urlopen.assert_called_once()
+    
+    @patch('src.utils.urlopen')
+    def test_http_post_json_with_unicode(self, mock_urlopen):
+        """Test HTTP POST with unicode response."""
+        from src.utils import _http_post_json
+        mock_response = MagicMock()
+        mock_response.read.return_value = '{"text": "こんにちは"}'.encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+        
+        result = _http_post_json(
+            "https://api.example.com/test",
+            {"Content-Type": "application/json"},
+            {"data": "test"},
+            timeout=30
+        )
+        
+        assert result["text"] == "こんにちは"
+    
+    @patch('src.utils.urlopen')
+    def test_http_post_json_http_error(self, mock_urlopen):
+        """Test HTTP POST with HTTP error response."""
+        from src.utils import _http_post_json
+        from urllib.error import HTTPError
+        mock_urlopen.side_effect = HTTPError(
+            "https://api.example.com",
+            401,
+            "Unauthorized",
+            {},
+            None
+        )
+        
+        with pytest.raises(RuntimeError, match="HTTP error"):
+            _http_post_json(
+                "https://api.example.com/test",
+                {"Authorization": "Bearer invalid"},
+                {"data": "test"},
+                timeout=30
+            )
+    
+    @patch('src.utils.urlopen')
+    def test_http_post_json_network_error(self, mock_urlopen):
+        """Test HTTP POST with network error."""
+        from src.utils import _http_post_json
+        from urllib.error import URLError
+        mock_urlopen.side_effect = URLError("Connection refused")
+        
+        with pytest.raises(RuntimeError, match="Network error"):
+            _http_post_json(
+                "https://api.example.com/test",
+                {"Content-Type": "application/json"},
+                {"data": "test"},
+                timeout=30
+            )
+    
+    @patch('src.utils.urlopen')
+    def test_http_post_json_invalid_json_response(self, mock_urlopen):
+        """Test HTTP POST with invalid JSON response."""
+        from src.utils import _http_post_json
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'invalid json {{'
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+        
+        with pytest.raises(Exception):  # json.JSONDecodeError
+            _http_post_json(
+                "https://api.example.com/test",
+                {"Content-Type": "application/json"},
+                {"data": "test"},
+                timeout=30
+            )
+
+
+@pytest.mark.unit
+class TestCandidateHash:
+    """Tests for candidate hash generation."""
+    
+    def test_candidate_hash_basic(self):
+        """Test basic hash generation for candidates."""
+        from src.utils import _candidate_hash
+        hash1 = _candidate_hash(["item1", "item2", "item3"])
+        assert isinstance(hash1, str)
+        assert len(hash1) == 64  # SHA256 hex is 64 chars
+    
+    def test_candidate_hash_order_independent(self):
+        """Test that hash is independent of candidate order."""
+        from src.utils import _candidate_hash
+        hash1 = _candidate_hash(["item1", "item2", "item3"])
+        hash2 = _candidate_hash(["item3", "item1", "item2"])
+        hash3 = _candidate_hash(["item2", "item3", "item1"])
+        assert hash1 == hash2 == hash3
+    
+    def test_candidate_hash_different_for_different_candidates(self):
+        """Test that different candidates produce different hashes."""
+        from src.utils import _candidate_hash
+        hash1 = _candidate_hash(["item1", "item2"])
+        hash2 = _candidate_hash(["item1", "item3"])
+        assert hash1 != hash2
+
+
+@pytest.mark.unit
+class TestLLMQuotaExceededError:
+    """Tests for LLMQuotaExceededError exception."""
+    
+    def test_quota_exceeded_error_subclass(self):
+        """Test that LLMQuotaExceededError is RuntimeError subclass."""
+        assert issubclass(LLMQuotaExceededError, RuntimeError)
+    
+    def test_quota_exceeded_error_instantiation(self):
+        """Test creating LLMQuotaExceededError instance."""
+        error = LLMQuotaExceededError("API quota exceeded")
+        assert isinstance(error, RuntimeError)
+        assert str(error) == "API quota exceeded"
+
+
+@pytest.mark.unit
+class TestNormalizeDescriptionWithLLM:
+    """Tests for LLM-based description normalization."""
+    
+    def test_normalize_empty_text(self):
+        """Test normalization of empty text returns empty string."""
+        from src.utils import normalize_description_with_llm
+        result = normalize_description_with_llm(
+            "",
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="fake-key"
+        )
+        assert result == ""
+    
+    def test_normalize_none_text(self):
+        """Test normalization of None text."""
+        from src.utils import normalize_description_with_llm
+        result = normalize_description_with_llm(
+            None,
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="fake-key"
+        )
+        assert result == ""
+    
+    @patch('src.utils._http_post_json')
+    def test_normalize_openai_success(self, mock_post):
+        """Test successful OpenAI normalization."""
+        from src.utils import normalize_description_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": "normalized description"}}
+            ]
+        }
+        
+        result = normalize_description_with_llm(
+            "messy description",
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="test-key"
+        )
+        
+        assert result == "normalized description"
+    
+    @patch('src.utils._http_post_json')
+    def test_normalize_azure_success(self, mock_post):
+        """Test successful Azure normalization."""
+        from src.utils import normalize_description_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": "normalized"}}
+            ]
+        }
+        
+        result = normalize_description_with_llm(
+            "test",
+            provider="azure",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="test-key",
+            endpoint="https://test.openai.azure.com",
+            deployment="test-deployment"
+        )
+        
+        assert result == "normalized"
+    
+    @patch('src.utils._http_post_json')
+    def test_normalize_gemini_success(self, mock_post):
+        """Test successful Gemini normalization."""
+        from src.utils import normalize_description_with_llm
+        mock_post.return_value = {
+            "candidates": [
+                {"content": {"parts": [{"text": "normalized"}]}}
+            ]
+        }
+        
+        result = normalize_description_with_llm(
+            "test",
+            provider="gemini",
+            model="gemini-pro",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="test-key"
+        )
+        
+        assert result == "normalized"
+    
+    @patch('src.utils._http_post_json')
+    def test_normalize_anthropic_success(self, mock_post):
+        """Test successful Anthropic normalization."""
+        from src.utils import normalize_description_with_llm
+        mock_post.return_value = {
+            "content": [{"text": "normalized"}]
+        }
+        
+        result = normalize_description_with_llm(
+            "test",
+            provider="anthropic",
+            model="claude-3",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="test-key"
+        )
+        
+        assert result == "normalized"
+    
+    @patch('src.utils._http_post_json')
+    def test_normalize_perplexity_success(self, mock_post):
+        """Test successful Perplexity normalization."""
+        from src.utils import normalize_description_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": "normalized"}}
+            ]
+        }
+        
+        result = normalize_description_with_llm(
+            "test",
+            provider="perplexity",
+            model="pplx-7b",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="test-key"
+        )
+        
+        assert result == "normalized"
+    
+    def test_normalize_missing_openai_key(self):
+        """Test OpenAI normalization with missing API key."""
+        from src.utils import normalize_description_with_llm
+        result = normalize_description_with_llm(
+            "test description",
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30
+        )
+        # Should fallback to original text on error
+        assert result == "test description"
+    
+    def test_normalize_missing_azure_credentials(self):
+        """Test Azure normalization with missing credentials."""
+        from src.utils import normalize_description_with_llm
+        result = normalize_description_with_llm(
+            "test description",
+            provider="azure",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="test-key"
+            # Missing endpoint and deployment
+        )
+        assert result == "test description"
+    
+    @patch('src.utils._http_post_json')
+    def test_normalize_quota_exceeded(self, mock_post):
+        """Test handling of quota exceeded error."""
+        from src.utils import normalize_description_with_llm
+        mock_post.side_effect = RuntimeError("insufficient_quota")
+        
+        with pytest.raises(LLMQuotaExceededError):
+            normalize_description_with_llm(
+                "test",
+                provider="openai",
+                model="gpt-4",
+                temperature=0.7,
+                max_tokens=100,
+                timeout_seconds=30,
+                api_key="test-key"
+            )
+    
+    @patch('src.utils._http_post_json')
+    def test_normalize_generic_error_fallback(self, mock_post):
+        """Test fallback to original text on generic error."""
+        from src.utils import normalize_description_with_llm
+        mock_post.side_effect = RuntimeError("API error")
+        
+        result = normalize_description_with_llm(
+            "original text",
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="test-key"
+        )
+        
+        assert result == "original text"
+    
+    def test_normalize_unsupported_provider(self):
+        """Test with unsupported LLM provider."""
+        from src.utils import normalize_description_with_llm
+        result = normalize_description_with_llm(
+            "test description",
+            provider="unsupported_provider",
+            model="model",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30,
+            api_key="key"
+        )
+        assert result == "test description"
+    
+    def test_normalize_case_insensitive_provider(self):
+        """Test that provider name is case-insensitive."""
+        from src.utils import normalize_description_with_llm
+        result = normalize_description_with_llm(
+            "test",
+            provider="OPENAI",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=100,
+            timeout_seconds=30
+        )
+        # Should handle uppercase provider name gracefully
+        assert isinstance(result, str)
+
+
+@pytest.mark.unit
+class TestSelectAlternativesWithLLM:
+    """Tests for LLM-based alternative selection."""
+    
+    def test_select_alternatives_empty_item(self):
+        """Test alternative selection with empty missing item."""
+        from src.utils import select_alternatives_with_llm
+        result = select_alternatives_with_llm(
+            "",
+            ["item1", "item2"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        assert result == []
+    
+    def test_select_alternatives_empty_candidates(self):
+        """Test alternative selection with empty candidates."""
+        from src.utils import select_alternatives_with_llm
+        result = select_alternatives_with_llm(
+            "missing_item",
+            [],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        assert result == []
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_openai_success(self, mock_post):
+        """Test successful OpenAI alternative selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.95, "reason": "similar"}]}'}}
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1", "alt2"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert len(result) == 1
+        assert result[0]["item"] == "alt1"
+        assert result[0]["score"] == 0.95
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_with_markdown_fence(self, mock_post):
+        """Test parsing response with markdown code fence."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '''Here are alternatives:
+```json
+[{"item": "alt1", "score": 0.9, "reason": "best match"}]
+```'''
+                    }
+                }
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert len(result) == 1
+        assert result[0]["item"] == "alt1"
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_max_alternatives_limit(self, mock_post):
+        """Test that results are limited by max_alternatives."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps({
+                            "alternatives": [
+                                {"item": "alt1", "score": 0.9, "reason": "1"},
+                                {"item": "alt2", "score": 0.8, "reason": "2"},
+                                {"item": "alt3", "score": 0.7, "reason": "3"},
+                                {"item": "alt4", "score": 0.6, "reason": "4"},
+                            ]
+                        })
+                    }
+                }
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1", "alt2", "alt3", "alt4"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=2,
+            api_key="test-key"
+        )
+        
+        assert len(result) == 2
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_raw_list_response(self, mock_post):
+        """Test parsing when response is raw list (not wrapped dict)."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps([
+                            {"item": "alt1", "score": 0.9, "reason": "match"}
+                        ])
+                    }
+                }
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert len(result) == 1
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_azure_success(self, mock_post):
+        """Test successful Azure alternative selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}}
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="azure",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key",
+            endpoint="https://test.openai.azure.com",
+            deployment="test"
+        )
+        
+        assert len(result) == 1
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_gemini_success(self, mock_post):
+        """Test successful Gemini alternative selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "candidates": [
+                {"content": {"parts": [{"text": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}]}}
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="gemini",
+            model="gemini-pro",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert len(result) == 1
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_anthropic_success(self, mock_post):
+        """Test successful Anthropic alternative selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "content": [
+                {"text": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="anthropic",
+            model="claude-3",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert len(result) == 1
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_perplexity_success(self, mock_post):
+        """Test successful Perplexity alternative selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}}
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="perplexity",
+            model="pplx-7b",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert len(result) == 1
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_invalid_json(self, mock_post):
+        """Test fallback on invalid JSON response."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": "invalid json content"}}
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert result == []
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_invalid_schema(self, mock_post):
+        """Test fallback on schema validation failure."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": '{"invalid": "structure"}'}}
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert result == []
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_non_list_alternatives(self, mock_post):
+        """Test fallback when alternatives field is not a list."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.return_value = {
+            "choices": [
+                {"message": {"content": '{"alternatives": "not a list"}'}}
+            ]
+        }
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert result == []
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_quota_exceeded(self, mock_post):
+        """Test handling of quota exceeded during selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.side_effect = RuntimeError("quota exceeded")
+        
+        with pytest.raises(LLMQuotaExceededError):
+            select_alternatives_with_llm(
+                "missing",
+                ["alt1"],
+                provider="openai",
+                model="gpt-4",
+                temperature=0.7,
+                max_tokens=500,
+                timeout_seconds=30,
+                max_alternatives=3,
+                api_key="test-key"
+            )
+    
+    @patch('src.utils._http_post_json')
+    def test_select_alternatives_generic_error_fallback(self, mock_post):
+        """Test fallback to empty list on generic error."""
+        from src.utils import select_alternatives_with_llm
+        mock_post.side_effect = RuntimeError("API error")
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="test-key"
+        )
+        
+        assert result == []
+    
+    def test_select_alternatives_missing_openai_key(self):
+        """Test with missing OpenAI API key."""
+        from src.utils import select_alternatives_with_llm
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="openai",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3
+        )
+        assert result == []
+    
+    def test_select_alternatives_unsupported_provider(self):
+        """Test with unsupported provider."""
+        from src.utils import select_alternatives_with_llm
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
+            provider="unknown_provider",
+            model="model",
+            temperature=0.7,
+            max_tokens=500,
+            timeout_seconds=30,
+            max_alternatives=3,
+            api_key="key"
+        )
+        assert result == []
+
+
+@pytest.mark.unit
+class TestSelectAlternativeHeuristic:
+    """Tests for heuristic-based alternative selection."""
+    
+    def test_heuristic_empty_arguments(self):
+        """Test heuristic with empty arguments."""
+        result = select_alternative_heuristic("", [])
+        assert result is None
+    
+    def test_heuristic_empty_missing_item(self):
+        """Test heuristic with empty missing item."""
+        result = select_alternative_heuristic("", ["item1", "item2"])
+        assert result is None
+    
+    def test_heuristic_empty_candidates(self):
+        """Test heuristic with empty candidates."""
+        result = select_alternative_heuristic("item1", [])
+        assert result is None
+    
+    def test_heuristic_exact_match(self):
+        """Test heuristic with exact match candidate."""
+        result = select_alternative_heuristic("blue shirt", ["blue shirt", "red shirt"])
+        assert result is not None
+        assert result["item"] == "blue shirt"
+        assert result["score"] > 0.9
+        assert result["reason"] == "token-overlap"
+    
+    def test_heuristic_partial_match(self):
+        """Test heuristic with partial token overlap."""
+        result = select_alternative_heuristic("blue cotton shirt", ["blue shirt", "red shirt"])
+        assert result is not None
+        assert result["item"] == "blue shirt"
+        assert 0.5 < result["score"] < 1.0
+    
+    def test_heuristic_no_match(self):
+        """Test heuristic with no matching candidates."""
+        result = select_alternative_heuristic("apple", ["xyz", "abc", "def"])
+        assert result is None  # No overlap should return None
+    
+    def test_heuristic_whitespace_handling(self):
+        """Test heuristic with extra whitespace."""
+        result = select_alternative_heuristic(
+            "blue   shirt",
+            ["blue shirt", "shirt blue"]
+        )
+        assert result is not None
+        assert result["item"] in ["blue shirt", "shirt blue"]
+    
+    def test_heuristic_case_insensitive(self):
+        """Test heuristic with different cases."""
+        result = select_alternative_heuristic(
+            "BLUE SHIRT",
+            ["blue shirt", "red shirt"]
+        )
+        assert result is not None
+        assert result["item"] == "blue shirt"

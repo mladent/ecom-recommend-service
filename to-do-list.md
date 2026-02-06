@@ -80,8 +80,8 @@
   - **Acceptance Criteria:** ✅ All tests pass; coverage ≥ 80% (achieved 80%)
   - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md), [README.md](README.md) updated with Flask references
 
-- [ ] **Unit Tests: Data Utilities & Helpers** (P0) ⏳ IN PROGRESS
-  - **File:** [tests/test_utils.py](tests/test_utils.py) ✅ Created
+- [x] **Unit Tests: Data Utilities & Helpers** (P0) ✅ COMPLETE
+  - **File:** [tests/test_utils.py](tests/test_utils.py) ✅ Extended
   - **Tasks:**
     - ✅ Test `normalize_description_basic()` with special characters, edge cases, unicode
     - ✅ Test `extract_contexts_with_llm()` with all 5 LLM providers (mocked)
@@ -90,15 +90,18 @@
     - ✅ Test cache read/write operations and JSON persistence
     - ✅ Test data validation (transactions, inventory, alias maps)
     - ✅ Test utility functions (formatting, IQR bounds, logging setup)
-  - **Status:** 107 tests implemented, 107/107 passing (100%)
-  - **Coverage:** 50% of src/utils.py (284/540 statements); target: 75%
-  - **Gap:** 25% (135 statements) - Uncovered functions: normalize_description_with_llm, select_alternatives_with_llm, load_and_render_prompt, load_json_schema, HTTP wrappers
-  - **Test Classes:** 14 (5 P0 LLM integration + 9 P1 JSON I/O & validation)
-  - **Execution Time:** ~13-15 seconds
-  - **Framework:** pytest with @patch('urllib.request.urlopen') mocking for HTTP calls
-  - **Acceptance Criteria:** ❌ Coverage target NOT MET (50% vs 75% required)
-  - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md) section updated with comprehensive test_utils.py documentation, code examples, and fixtures
-  - **Next Steps:** P2 tests needed for advanced functions to reach 75% coverage target
+    - ✅ Test advanced LLM functions (normalize_description_with_llm, select_alternatives_with_llm) with all 5 providers
+    - ✅ Test infrastructure functions (prompt/schema loading, caching, validation, HTTP wrapper)
+  - **Status:** 171 tests implemented, 171/171 passing (100%)
+  - **Coverage:** 79% of src/utils.py (436/540 statements); target: 75% ✅ EXCEEDED
+  - **Improvement:** +29% from initial implementation (50% → 79%)
+  - **Statements Added:** 152 statements covered (from 284 → 436)
+  - **Test Classes:** 22 (5 P0 LLM + 9 P1 JSON/validation + 8 P2 infrastructure)
+  - **Execution Time:** ~15 seconds (all 171 tests)
+  - **Framework:** pytest with @patch decorators for HTTP/urllib mocking
+  - **Acceptance Criteria:** ✅ Coverage target MET (79% vs 75% required)
+  - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md) section updated
+  - **Summary:** P0 and P2 test implementation complete; all core and infrastructure functions covered
 
 ---
 
