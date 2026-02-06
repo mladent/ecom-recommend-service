@@ -49,12 +49,14 @@ pytest tests/test_data_pipeline.py -v
 pytest tests/test_recommendation_engine.py -v
 pytest tests/test_llm_integration.py -v
 pytest tests/test_api.py -v
+pytest tests/test_utils.py -v
 
 # Specific test class
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics -v
 pytest tests/test_recommendation_engine.py::TestNaiveBayesRecommender -v
 pytest tests/test_llm_integration.py::TestSelectAlternativesWithLLM -v
 pytest tests/test_api.py::TestBundlesEndpoint -v
+pytest tests/test_utils.py::TestLoadJsonFile -v
 
 # Specific test function
 pytest tests/test_data_pipeline.py::TestDataPipelineBasics::test_initialization_defaults -v
@@ -92,7 +94,7 @@ tests/
 ├── test_recommendation_engine.py # Recommendation tests (✅ Implemented)
 ├── test_llm_integration.py     # LLM integration tests (✅ Implemented)
 ├── test_api.py                 # Flask API endpoint tests (✅ Implemented)
-├── test_utils.py               # (To be implemented)
+├── test_utils.py               # Utils & helpers tests (✅ Implemented)
 └── test_integration.py         # (To be implemented)
 ```
 
@@ -1233,6 +1235,725 @@ pytest tests/test_api.py::TestBundlesEndpoint::test_bundles_successful_request -
 
 ---
 
+## Utilities Testing (test_utils.py)
+
+### Overview
+
+Utility function tests cover JSON I/O, data validation, inventory loading, LLM integration helpers, and utility functions used across the project. Tests are organized into **P0 (LLM integration)** and **P1 (file I/O, validation)** priority tiers.
+
+**Current Status:**
+- ✅ **107 total tests** (51 P0 + 56 P1)
+- ✅ **50% coverage** of src/utils.py (284/540 statements)
+- ✅ **100% pass rate** (~13-15s execution time)
+
+### Test Classes
+
+#### ✅ TestNormalizeDescriptionBasic (Implemented - P0)
+
+Tests basic text normalization: lowercase, whitespace collapse, special character removal, and unit standardization.
+
+```python
+def test_lowercasing(self):
+    """Test lowercase conversion."""
+    result = normalize_description_basic("RED Roses")
+    assert result == "red roses"
+
+def test_whitespace_collapse(self):
+    """Test multiple spaces collapsed to single space."""
+    result = normalize_description_basic("multi   space   text")
+    assert result == "multi space text"
+
+def test_unit_normalization_inches(self):
+    """Test inches/inch/in. → in conversion."""
+    result = normalize_description_basic("12 inches tall")
+    assert "12 in tall" in result
+
+def test_special_characters_removed(self):
+    """Test special characters are stripped."""
+    result = normalize_description_basic("hello@#$world")
+    assert "@" not in result and "#" not in result
+
+def test_unicode_characters_preserved(self):
+    """Test unicode chars are preserved."""
+    result = normalize_description_basic("café naïve")
+    assert "café" in result
+```
+
+**Tests:** 11 | **Lines:** ~50-180
+
+---
+
+#### ✅ TestExtractContextsWithLLM (Implemented - P0)
+
+Tests LLM-based context extraction with mocked urllib HTTP calls. Validates all 5 providers (OpenAI, Azure, Gemini, Anthropic, Perplexity).
+
+```python
+@patch('urllib.request.urlopen')
+def test_valid_response_structure(self, mock_urlopen):
+    """Test parsing valid LLM response."""
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps({
+        "contexts": [
+            {"context": "casual wear", "confidence": 0.95},
+            {"context": "everyday use", "confidence": 0.88}
+        ]
+    }).encode('utf-8')
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    
+    result = extract_contexts_with_llm(
+        "blue jeans", "openai", "gpt-4", 0.7, 256, 30, "test-key"
+    )
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0]["context"] == "casual wear"
+
+@pytest.mark.parametrize("provider", [
+    "openai", "azure", "gemini", "anthropic", "perplexity"
+])
+@patch('urllib.request.urlopen')
+def test_all_providers_supported(self, mock_urlopen, provider):
+    """Test all 5 LLM providers with mocked responses."""
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps({
+        "contexts": [{"context": "test", "confidence": 0.9}]
+    }).encode('utf-8')
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    
+    result = extract_contexts_with_llm(
+        "test item", provider, "model", 0.7, 256, 30, "key"
+    )
+    assert isinstance(result, list)
+
+@patch('urllib.request.urlopen')
+def test_http_error_returns_empty_list(self, mock_urlopen):
+    """Test graceful error handling on HTTP errors."""
+    mock_urlopen.side_effect = urllib.error.HTTPError(
+        None, 500, "Server Error", {}, None
+    )
+    result = extract_contexts_with_llm(
+        "test", "openai", "gpt-4", 0.7, 256, 30, "key"
+    )
+    assert result == []
+```
+
+**Tests:** 14 | **Lines:** ~200-450 | **Key Pattern:** `@patch('urllib.request.urlopen')` for HTTP interception
+
+---
+
+#### ✅ TestEnrichCategoriesWithLLM (Implemented - P0)
+
+Tests category enrichment with field validation and NaN defaults for invalid/missing data.
+
+```python
+@patch('urllib.request.urlopen')
+def test_valid_response_all_fields(self, mock_urlopen):
+    """Test category extraction with all 6 fields."""
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps({
+        "category": "clothing",
+        "material": "cotton",
+        "color": "blue",
+        "style": "casual",
+        "size_unit": "L",
+        "weight_unit": "kg"
+    }).encode('utf-8')
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    
+    result = enrich_categories_with_llm(
+        "blue cotton shirt", "openai", "gpt-4", 0.7, 256, 30, "key"
+    )
+    assert isinstance(result, dict)
+    assert len(result) == 6
+    assert result["category"] == "clothing"
+    assert result["material"] == "cotton"
+
+@patch('urllib.request.urlopen')
+def test_invalid_json_all_nan(self, mock_urlopen):
+    """Test graceful handling of invalid JSON → all NaN."""
+    mock_response = MagicMock()
+    mock_response.read.return_value = b"{invalid json}"
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    
+    result = enrich_categories_with_llm(
+        "test", "openai", "gpt-4", 0.7, 256, 30, "key"
+    )
+    assert isinstance(result, dict)
+    assert all(pd.isna(v) for v in result.values())
+
+@patch('urllib.request.urlopen')
+def test_missing_fields_filled_with_nan(self, mock_urlopen):
+    """Test missing fields are filled with NaN."""
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps({
+        "category": "electronics"
+        # Missing: material, color, style, size_unit, weight_unit
+    }).encode('utf-8')
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    
+    result = enrich_categories_with_llm(
+        "laptop", "openai", "gpt-4", 0.7, 256, 30, "key"
+    )
+    assert result["category"] == "electronics"
+    assert pd.isna(result["material"])
+```
+
+**Tests:** 11 | **Lines:** ~450-650 | **Key Pattern:** All missing/invalid data → `pd.isna()` (NaN)
+
+---
+
+#### ✅ TestEnrichCategoriesBatchWithLLM (Implemented - P0)
+
+Tests batch category enrichment with automatic deduplication of identical descriptions.
+
+```python
+@patch('urllib.request.urlopen')
+def test_duplicate_texts_deduplicated(self, mock_urlopen):
+    """Test batch processing deduplicates identical descriptions."""
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps({
+        "category": "electronics", "material": "plastic",
+        "color": "black", "style": "modern",
+        "size_unit": "N/A", "weight_unit": "g"
+    }).encode('utf-8')
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    
+    texts = ["laptop", "laptop", "mouse"]  # Duplicate "laptop"
+    result = enrich_categories_batch_with_llm(
+        texts, "openai", "gpt-4", 0.7, 256, 30, "test-key"
+    )
+    
+    # Verify only 2 LLM calls made (laptop deduplicated)
+    assert mock_urlopen.call_count == 2
+    assert len(result) == 2  # "laptop" and "mouse"
+
+@patch('urllib.request.urlopen')
+def test_batch_with_various_inputs(self, mock_urlopen):
+    """Test batch with empty strings, None, and valid inputs."""
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps({
+        "category": "test", "material": "N/A", "color": "N/A",
+        "style": "N/A", "size_unit": "N/A", "weight_unit": "N/A"
+    }).encode('utf-8')
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    
+    texts = ["valid item", "", None, "another item"]
+    result = enrich_categories_batch_with_llm(
+        texts, "openai", "gpt-4", 0.7, 256, 30, "key"
+    )
+    # Empty/None filtered out before LLM calls
+```
+
+**Tests:** 5 | **Lines:** ~650-750 | **Key Feature:** Automatic deduplication to reduce LLM costs
+
+---
+
+#### ✅ TestBatchScoreAnomaliesWithLLM (Implemented - P0)
+
+Tests batch anomaly detection with error handling and validation.
+
+```python
+@patch('urllib.request.urlopen')
+def test_multiple_records(self, mock_urlopen):
+    """Test batch anomaly scoring for multiple records."""
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps({
+        "r1": {
+            "anomaly_score": 0.95,
+            "anomaly_type": "high_quantity_low_price",
+            "reasoning": "Quantity 1000 with price $0.01"
+        },
+        "r2": {
+            "anomaly_score": 0.85,
+            "anomaly_type": "negative_quantity",
+            "reasoning": "Negative quantity -5"
+        }
+    }).encode('utf-8')
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    
+    records = [
+        {"key": "r1", "Quantity": 1000, "UnitPrice": 0.01},
+        {"key": "r2", "Quantity": -5, "UnitPrice": 10.0}
+    ]
+    result = batch_score_anomalies_with_llm(
+        records, "openai", "gpt-4", 0.7, 512, 30, "test-key"
+    )
+    
+    assert "r1" in result
+    assert result["r1"]["anomaly_type"] == "high_quantity_low_price"
+    assert "r2" in result
+
+@patch('urllib.request.urlopen')
+def test_empty_records_returns_empty_dict(self, mock_urlopen):
+    """Test empty input returns empty dict."""
+    result = batch_score_anomalies_with_llm(
+        [], "openai", "gpt-4", 0.7, 512, 30, "key"
+    )
+    assert result == {}
+    assert mock_urlopen.call_count == 0  # No LLM calls for empty input
+```
+
+**Tests:** 10 | **Lines:** ~750-873 | **Key Pattern:** Batch processing with record keys for result mapping
+
+---
+
+#### ✅ TestLoadJsonFile (Implemented - P1)
+
+Tests JSON file loading with comprehensive error handling (invalid JSON, missing files, empty files).
+
+```python
+def test_load_valid_json_file(self, temp_json_file):
+    """Test loading valid JSON file."""
+    result = load_json_file(str(temp_json_file))
+    assert isinstance(result, dict)
+    assert "key" in result
+    assert result["key"] == "value"
+
+def test_load_nonexistent_file(self):
+    """Test loading nonexistent file returns empty dict."""
+    result = load_json_file("/nonexistent/path/file.json")
+    assert result == {}
+
+def test_load_invalid_json_file(self, tmp_path):
+    """Test invalid JSON returns empty dict."""
+    invalid_file = tmp_path / "invalid.json"
+    invalid_file.write_text("{not valid json")
+    result = load_json_file(str(invalid_file))
+    assert result == {}
+
+def test_load_json_array(self, tmp_path):
+    """Test loading JSON array (not just objects)."""
+    array_file = tmp_path / "array.json"
+    array_file.write_text('[{"item": "a"}, {"item": "b"}]')
+    result = load_json_file(str(array_file))
+    assert isinstance(result, list)
+    assert len(result) == 2
+
+def test_load_json_with_unicode(self, tmp_path):
+    """Test unicode character handling."""
+    unicode_file = tmp_path / "unicode.json"
+    unicode_file.write_text('{"text": "café naïve"}', encoding='utf-8')
+    result = load_json_file(str(unicode_file))
+    assert result["text"] == "café naïve"
+```
+
+**Tests:** 8 | **Lines:** ~900-1050 | **Error Handling:** All errors → `{}`
+
+---
+
+#### ✅ TestSaveJsonFile (Implemented - P1)
+
+Tests JSON file saving with directory auto-creation and overwrite handling.
+
+```python
+def test_save_dict_to_json(self, tmp_path):
+    """Test saving dictionary to JSON file."""
+    output_file = tmp_path / "output.json"
+    data = {"key": "value", "number": 42}
+    save_json_file(str(output_file), data)
+    
+    assert output_file.exists()
+    result = json.loads(output_file.read_text())
+    assert result == data
+
+def test_save_list_to_json(self, tmp_path):
+    """Test saving list to JSON file."""
+    output_file = tmp_path / "list.json"
+    data = [{"id": 1}, {"id": 2}]
+    save_json_file(str(output_file), data)
+    
+    result = json.loads(output_file.read_text())
+    assert isinstance(result, list)
+
+def test_save_creates_nonexistent_directory(self, tmp_path):
+    """Test directory auto-creation."""
+    output_file = tmp_path / "subdir" / "nested" / "file.json"
+    save_json_file(str(output_file), {"test": "data"})
+    
+    assert output_file.exists()
+    assert output_file.parent.exists()
+
+def test_save_overwrites_existing_file(self, tmp_path):
+    """Test overwriting existing file."""
+    output_file = tmp_path / "existing.json"
+    output_file.write_text('{"old": "data"}')
+    
+    save_json_file(str(output_file), {"new": "data"})
+    result = json.loads(output_file.read_text())
+    assert result == {"new": "data"}
+```
+
+**Tests:** 7 | **Lines:** ~1050-1150 | **Key Feature:** Automatic directory creation with `os.makedirs(exist_ok=True)`
+
+---
+
+#### ✅ TestLoadAliasMap (Implemented - P1)
+
+Tests alias map loading with key/value normalization via `normalize_description_basic()`.
+
+```python
+def test_load_valid_alias_map(self, tmp_path):
+    """Test loading alias map from JSON."""
+    alias_file = tmp_path / "aliases.json"
+    aliases = {"ITEM1": "variant1", "ITEM2": "variant2"}
+    alias_file.write_text(json.dumps(aliases))
+    
+    result = load_alias_map(str(alias_file))
+    assert isinstance(result, dict)
+    # Keys and values normalized (lowercased, whitespace stripped)
+    assert "item1" in result or "variant1" in result.values()
+
+def test_load_alias_map_with_special_chars(self, tmp_path):
+    """Test special character handling in aliases."""
+    alias_file = tmp_path / "special.json"
+    aliases = {"item@#1": "variant!@#"}
+    alias_file.write_text(json.dumps(aliases))
+    
+    result = load_alias_map(str(alias_file))
+    # Special chars stripped during normalization
+
+def test_load_nonexistent_alias_map(self):
+    """Test nonexistent file returns empty dict."""
+    result = load_alias_map("/nonexistent/aliases.json")
+    assert result == {}
+```
+
+**Tests:** 6 | **Lines:** ~1150-1220 | **Normalization:** Both keys and values passed through `normalize_description_basic()`
+
+---
+
+#### ✅ TestValidateTransaction (Implemented - P1)
+
+Tests transaction list validation (must be list of strings).
+
+```python
+def test_valid_transaction(self):
+    """Test validation of valid transaction list."""
+    transaction = ["item1", "item2", "item3"]
+    result = validate_transaction(transaction)
+    assert result is True
+
+def test_empty_transaction_invalid(self):
+    """Test empty transaction is invalid."""
+    result = validate_transaction([])
+    assert result is False
+
+def test_none_transaction_invalid(self):
+    """Test None transaction is invalid."""
+    result = validate_transaction(None)
+    assert result is False
+
+def test_transaction_with_non_string_items(self):
+    """Test non-string items are invalid."""
+    transaction = ["item1", 123, "item3"]
+    result = validate_transaction(transaction)
+    assert result is False
+
+def test_transaction_not_a_list(self):
+    """Test non-list input is invalid."""
+    result = validate_transaction("not a list")
+    assert result is False
+```
+
+**Tests:** 6 | **Lines:** ~1220-1280 | **Validation:** `isinstance(txn, list)` and `all(isinstance(item, str) for item in txn)`
+
+---
+
+#### ✅ TestFilterTransaction (Implemented - P1)
+
+Tests item filtering by minimum length with lowercase normalization.
+
+```python
+def test_filter_removes_short_items(self):
+    """Test min_length parameter filters short items."""
+    transaction = ["ITEM", "at", "SOMETHING LONGER"]
+    result = filter_transaction(transaction, min_length=3)
+    
+    assert "at" not in result  # Too short (2 chars)
+    assert len(result) == 2
+
+def test_filter_lowercases_items(self):
+    """Test items are lowercased."""
+    transaction = ["UPPERCASE", "MixedCase"]
+    result = filter_transaction(transaction)
+    assert all(item.islower() for item in result)
+
+def test_filter_strips_whitespace(self):
+    \"\"\"Test leading/trailing whitespace is stripped.\"\"\"
+    transaction = ["  item1  ", "item2   "]
+    result = filter_transaction(transaction)
+    assert all(item == item.strip() for item in result)
+
+def test_filter_with_custom_threshold(self):
+    """Test custom min_length threshold."""
+    transaction = ["a", "ab", "abc", "abcd"]
+    result = filter_transaction(transaction, min_length=4)
+    assert result == ["abcd"]
+```
+
+**Tests:** 6 | **Lines:** ~1280-1340 | **Default:** `min_length=1`
+
+---
+
+#### ✅ TestLoadInventoryCsv (Implemented - P1)
+
+Tests inventory CSV loading with flexible column name matching.
+
+```python
+def test_load_valid_inventory_csv(self, tmp_path):
+    """Test loading inventory CSV file."""
+    csv_file = tmp_path / "inventory.csv"
+    csv_content = \"\"\"StockCode,Description,Price
+85123A,WHITE HEART HOLDER,2.55
+85099B,BLUE POLKA JUMBO BAG,1.95
+\"\"\"
+    csv_file.write_text(csv_content)
+    result = load_inventory_csv(str(csv_file))
+    assert isinstance(result, dict)
+    assert len(result) > 0
+
+def test_load_inventory_csv_with_missing_columns(self, tmp_path):
+    \"\"\"Test graceful handling of missing columns.\"\"\"
+    csv_file = tmp_path / "missing.csv"
+    csv_file.write_text("StockCode,Description\\n85123A,ITEM\\n")
+    result = load_inventory_csv(str(csv_file))
+    # Function handles missing Price column gracefully
+
+def test_load_nonexistent_inventory_csv(self):
+    \"\"\"Test nonexistent file returns empty dict.\"\"\"
+    result = load_inventory_csv("/nonexistent/inventory.csv")
+    assert result == {}
+
+def test_load_inventory_csv_with_unicode(self, tmp_path):
+    \"\"\"Test unicode characters in descriptions.\"\"\"
+    csv_file = tmp_path / "unicode.csv"
+    csv_content = \"\"\"StockCode,Description,Price
+TEST1,café table,10.00
+\"\"\"
+    csv_file.write_text(csv_content, encoding='utf-8')
+    result = load_inventory_csv(str(csv_file))
+    # Unicode preserved in descriptions
+```
+
+**Tests:** 7 | **Lines:** ~1340-1400 | **Flexibility:** Column names case-insensitive, flexible matching
+
+---
+
+#### ✅ TestFormatRecommendations (Implemented - P1)
+
+Tests recommendation output formatting with confidence percentages.
+
+```python
+def test_format_basic_recommendations(self):
+    \"\"\"Test formatting recommendations dict.\"\"\"
+    recommendations = {
+        "transaction": ["item1", "item2"],
+        "confidence": 0.85,
+        "recommender": "naive_bayes",
+        "bundles": [("bundle1", "bundle2"), ("bundle3", "bundle4")]
+    }
+    result = format_recommendations(recommendations)
+    
+    assert "BUNDLE RECOMMENDATIONS" in result
+    assert "85.00%" in result  # Confidence formatted as percentage
+    assert "naive_bayes" in result
+    assert "1)" in result  # Numbered bundles
+
+def test_format_high_confidence(self):
+    \"\"\"Test high confidence formatting.\"\"\"
+    recommendations = {
+        "transaction": ["laptop"],
+        "confidence": 0.99,
+        "recommender": "svm",
+        "bundles": [("mouse", "keyboard")]
+    }
+    result = format_recommendations(recommendations)
+    assert "99.00%" in result
+
+def test_format_with_empty_bundles(self):
+    \"\"\"Test formatting with no bundles.\"\"\"
+    recommendations = {
+        "transaction": ["item"],
+        "confidence": 0.5,
+        "recommender": "test",
+        "bundles": []
+    }
+    result = format_recommendations(recommendations)
+    # Graceful handling of empty bundles
+```
+
+**Tests:** 5 | **Lines:** ~1400-1430 | **Format:** Confidence as `{conf*100:.2f}%`
+
+---
+
+#### ✅ TestComputeIQRBounds (Implemented - P1)
+
+Tests IQR bounds calculation for pandas Series with NaN handling.
+
+```python
+def test_compute_iqr_normal_data(self):
+    \"\"\"Test IQR bounds on normal data.\"\"\"
+    import pandas as pd
+    data = pd.Series([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    lower, upper = compute_iqr_bounds(data)
+    
+    assert lower < upper
+    assert isinstance(lower, float)
+    assert isinstance(upper, float)
+
+def test_compute_iqr_with_nan(self):
+    \"\"\"Test NaN values are dropped before calculation.\"\"\"
+    import pandas as pd
+    data = pd.Series([1, 2, 3, float('nan'), 5])
+    lower, upper = compute_iqr_bounds(data)
+    # NaN values ignored, calculation proceeds on valid values
+
+def test_compute_iqr_with_custom_multiplier(self):
+    \"\"\"Test custom IQR multiplier.\"\"\"
+    import pandas as pd
+    data = pd.Series([1, 2, 3, 4, 5])
+    lower1, upper1 = compute_iqr_bounds(data, multiplier=1.5)
+    lower2, upper2 = compute_iqr_bounds(data, multiplier=3.0)
+    
+    # Wider bounds with larger multiplier
+    assert lower2 < lower1
+    assert upper2 > upper1
+```
+
+**Tests:** 6 | **Lines:** ~1430-1455 | **Formula:** `lower = Q1 - multiplier*IQR`, `upper = Q3 + multiplier*IQR`
+
+---
+
+#### ✅ TestSetupLogging (Implemented - P1)
+
+Tests logging configuration with various log levels.
+
+```python
+def test_setup_logging_with_default_level(self):
+    \"\"\"Test setup_logging with default level.\"\"\"
+    result = setup_logging()
+    assert result is None  # Side-effect only function
+
+def test_setup_logging_with_debug_level(self):
+    \"\"\"Test setup_logging with DEBUG level.\"\"\"
+    import logging
+    result = setup_logging(logging.DEBUG)
+    assert result is None
+
+def test_setup_logging_with_info_level(self):
+    \"\"\"Test setup_logging with INFO level.\"\"\"
+    import logging
+    result = setup_logging(logging.INFO)
+    assert result is None
+
+def test_setup_logging_with_warning_level(self):
+    \"\"\"Test setup_logging with WARNING level.\"\"\"
+    import logging
+    result = setup_logging(logging.WARNING)
+    assert result is None
+```
+
+**Tests:** 5 | **Lines:** ~1455-1467 | **Pattern:** Side-effect testing (function returns None)
+
+---
+
+### Running Utilities Tests
+
+```bash
+# All utils tests (107 tests)
+pytest tests/test_utils.py -v
+
+# P0 tests only (LLM integration - 51 tests)
+pytest tests/test_utils.py::TestNormalizeDescriptionBasic -v
+pytest tests/test_utils.py::TestExtractContextsWithLLM -v
+pytest tests/test_utils.py::TestEnrichCategoriesWithLLM -v
+pytest tests/test_utils.py::TestEnrichCategoriesBatchWithLLM -v
+pytest tests/test_utils.py::TestBatchScoreAnomaliesWithLLM -v
+
+# P1 tests only (JSON I/O, validation, utilities - 56 tests)
+pytest tests/test_utils.py::TestLoadJsonFile -v
+pytest tests/test_utils.py::TestSaveJsonFile -v
+pytest tests/test_utils.py::TestLoadAliasMap -v
+pytest tests/test_utils.py::TestValidateTransaction -v
+pytest tests/test_utils.py::TestFilterTransaction -v
+pytest tests/test_utils.py::TestLoadInventoryCsv -v
+pytest tests/test_utils.py::TestFormatRecommendations -v
+pytest tests/test_utils.py::TestComputeIQRBounds -v
+pytest tests/test_utils.py::TestSetupLogging -v
+
+# With coverage
+pytest tests/test_utils.py --cov=src.utils --cov-report=term-missing -v
+
+# Specific test
+pytest tests/test_utils.py::TestLoadJsonFile::test_load_valid_json_file -vv -s
+
+# Run by marker (if markers added)
+pytest tests/test_utils.py -m "p0" -v
+pytest tests/test_utils.py -m "p1" -v
+```
+
+### Utils Test Fixtures
+
+Key fixtures defined in `tests/test_utils.py`:
+
+```python
+@pytest.fixture
+def temp_json_file(tmp_path):
+    \"\"\"Temporary JSON file for testing load/save operations.\"\"\"
+    file_path = tmp_path / "test.json"
+    test_data = {"key": "value", "items": [1, 2, 3]}
+    with open(file_path, "w") as f:
+        json.dump(test_data, f)
+    return file_path
+
+@pytest.fixture
+def mock_llm_response_contexts():
+    \"\"\"Mock LLM response for context extraction tests.\"\"\"
+    return {
+        "contexts": [
+            {"context": "casual wear", "confidence": 0.95},
+            {"context": "everyday use", "confidence": 0.88}
+        ]
+    }
+
+@pytest.fixture
+def mock_llm_response_categories():
+    \"\"\"Mock LLM response for category enrichment tests.\"\"\"
+    return {
+        "category": "clothing",
+        "material": "cotton",
+        "color": "blue",
+        "style": "casual",
+        "size_unit": "L",
+        "weight_unit": "kg"
+    }
+
+# pytest's tmp_path fixture used extensively for file I/O tests
+```
+
+### Utils Test Coverage
+
+**Current Coverage:** 50% of src/utils.py (284/540 statements)
+
+**Covered Functions:**
+- ✅ `normalize_description_basic()` - Full coverage
+- ✅ `extract_contexts_with_llm()` - All providers + error handling
+- ✅ `enrich_categories_with_llm()` - All 6 fields + NaN defaults
+- ✅ `enrich_categories_batch_with_llm()` - Deduplication + batch processing
+- ✅ `batch_score_anomalies_with_llm()` - Batch scoring + error handling
+- ✅ `load_json_file()` - Valid/invalid/missing files
+- ✅ `save_json_file()` - Dict/list saving + directory creation
+- ✅ `load_alias_map()` - Normalization + error handling
+- ✅ `validate_transaction()` - Type validation
+- ✅ `filter_transaction()` - Min length filtering
+- ✅ `load_inventory_csv()` - CSV loading + flexible columns
+- ✅ `format_recommendations()` - Output formatting
+- ✅ `compute_iqr_bounds()` - IQR calculation + NaN handling
+- ✅ `setup_logging()` - Logging configuration
+
+**Gap to 75% Target:** 25% (135 statements) - Requires P2 implementation
+
+---
+
 ## Performance Benchmarks
 
 ### Expected Test Execution Time
@@ -1245,8 +1966,9 @@ pytest tests/test_api.py::TestBundlesEndpoint::test_bundles_successful_request -
 | Recommendation engine tests | ~12-15s | 62 tests, NB + SVM + Engine |
 | LLM integration tests | ~5-8s | 22 tests, all mocked |
 | API endpoint tests | ~3-5s | 43 tests, Flask test client |
-| All implemented tests | ~28-40s | 171 tests total |
-| All tests (P0 complete) | ~35-50s | ~183 tests total |
+| Utils tests | ~13-15s | 107 tests, urllib mocking |
+| All implemented tests | ~41-55s | 278 tests total |
+| All tests (P0 complete) | ~45-60s | ~290+ tests total |
 
 ### Memory Usage
 

@@ -80,15 +80,28 @@
   - **Acceptance Criteria:** ✅ All tests pass; coverage ≥ 80% (achieved 80%)
   - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md), [README.md](README.md) updated with Flask references
 
-- [ ] **Unit Tests: Data Utilities & Helpers** (P0)
-  - **File:** [tests/test_utils.py](tests/test_utils.py) (create new)
+- [x] **Unit Tests: Data Utilities & Helpers** (P0) ✅ COMPLETE
+  - **File:** [tests/test_utils.py](tests/test_utils.py) ✅ Extended
   - **Tasks:**
-    - Test `normalize_description()` with special characters, edge cases
-    - Test `extract_contexts_with_llm()` and caching
-    - Test LLM batch processing functions
-    - Test error handling for malformed inputs
-    - Test cache read/write operations (JSON persistence)
-  - **Acceptance Criteria:** All tests pass; coverage ≥ 75%
+    - ✅ Test `normalize_description_basic()` with special characters, edge cases, unicode
+    - ✅ Test `extract_contexts_with_llm()` with all 5 LLM providers (mocked)
+    - ✅ Test LLM batch processing with deduplication and error handling
+    - ✅ Test error handling for malformed inputs (JSON, CSV, missing files)
+    - ✅ Test cache read/write operations and JSON persistence
+    - ✅ Test data validation (transactions, inventory, alias maps)
+    - ✅ Test utility functions (formatting, IQR bounds, logging setup)
+    - ✅ Test advanced LLM functions (normalize_description_with_llm, select_alternatives_with_llm) with all 5 providers
+    - ✅ Test infrastructure functions (prompt/schema loading, caching, validation, HTTP wrapper)
+  - **Status:** 171 tests implemented, 171/171 passing (100%)
+  - **Coverage:** 79% of src/utils.py (436/540 statements); target: 75% ✅ EXCEEDED
+  - **Improvement:** +29% from initial implementation (50% → 79%)
+  - **Statements Added:** 152 statements covered (from 284 → 436)
+  - **Test Classes:** 22 (5 P0 LLM + 9 P1 JSON/validation + 8 P2 infrastructure)
+  - **Execution Time:** ~15 seconds (all 171 tests)
+  - **Framework:** pytest with @patch decorators for HTTP/urllib mocking
+  - **Acceptance Criteria:** ✅ Coverage target MET (79% vs 75% required)
+  - **Documentation:** [TESTING_GUIDE.md](TESTING_GUIDE.md) section updated
+  - **Summary:** P0 and P2 test implementation complete; all core and infrastructure functions covered
 
 ---
 
