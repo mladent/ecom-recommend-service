@@ -55,6 +55,7 @@ from src.config import (
     CONTEXT_MAX_CONTEXTS,
     CONTEXT_MIN_CONFIDENCE,
 )
+from src.llm_client import LLMConfig, LLMClient
 from src.utils import (
     normalize_description_basic,
     normalize_description_with_llm,
@@ -356,18 +357,26 @@ class DataPipeline:
             logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
 
         provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-        llm_available = True
-
-        if provider == "openai" and not OPENAI_API_KEY:
-            llm_available = False
-        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-            llm_available = False
-        elif provider == "gemini" and not GEMINI_API_KEY:
-            llm_available = False
-        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-            llm_available = False
-        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-            llm_available = False
+        
+        # Validate LLM credentials using unified client
+        config = LLMConfig(
+            provider=provider,
+            model=LLM_MODEL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+            timeout_seconds=LLM_TIMEOUT_SECONDS,
+            openai_api_key=OPENAI_API_KEY,
+            azure_api_key=AZURE_OPENAI_API_KEY,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            azure_deployment=AZURE_OPENAI_DEPLOYMENT,
+            azure_api_version=AZURE_OPENAI_API_VERSION,
+            gemini_api_key=GEMINI_API_KEY,
+            anthropic_api_key=ANTHROPIC_API_KEY,
+            perplexity_api_key=PERPLEXITY_API_KEY,
+            perplexity_base_url=PERPLEXITY_BASE_URL,
+        )
+        client = LLMClient(config)
+        llm_available = client.validate_credentials()
 
         if not llm_available:
             logger.warning(
@@ -486,8 +495,8 @@ class DataPipeline:
         """
         """Create derived features and standardize data."""
         df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
-        df["InvoiceSeason"] = df["InvoiceDate"].dt.month % 12 // 3 + 1 
-        df["InvoiceDayOfWeek"] = df["InvoiceDate"].dt.dayofweek + 1
+        df["InvoiceSeason"] = df["InvoiceDate"].dt.month % 12 // 3 + 1  # type: ignore[attr-defined]
+        df["InvoiceDayOfWeek"] = df["InvoiceDate"].dt.dayofweek + 1  # type: ignore[attr-defined]
         df["TransactionValue"] = df["Quantity"] * df["UnitPrice"]
         if not NORMALIZATION_ENABLED:
             df["Description"] = df["Description"].str.strip().str.lower()
@@ -530,18 +539,26 @@ class DataPipeline:
             return df
 
         provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-        llm_available = True
-
-        if provider == "openai" and not OPENAI_API_KEY:
-            llm_available = False
-        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-            llm_available = False
-        elif provider == "gemini" and not GEMINI_API_KEY:
-            llm_available = False
-        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-            llm_available = False
-        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-            llm_available = False
+        
+        # Validate LLM credentials using unified client
+        config = LLMConfig(
+            provider=provider,
+            model=LLM_MODEL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+            timeout_seconds=LLM_TIMEOUT_SECONDS,
+            openai_api_key=OPENAI_API_KEY,
+            azure_api_key=AZURE_OPENAI_API_KEY,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            azure_deployment=AZURE_OPENAI_DEPLOYMENT,
+            azure_api_version=AZURE_OPENAI_API_VERSION,
+            gemini_api_key=GEMINI_API_KEY,
+            anthropic_api_key=ANTHROPIC_API_KEY,
+            perplexity_api_key=PERPLEXITY_API_KEY,
+            perplexity_base_url=PERPLEXITY_BASE_URL,
+        )
+        client = LLMClient(config)
+        llm_available = client.validate_credentials()
 
         if not llm_available:
             logger.warning("Outlier detection enabled but provider credentials are missing; using heuristic labels")
@@ -651,14 +668,14 @@ class DataPipeline:
         for idx, row in candidates.iterrows():
             key = row["_record_key"]
             result = results.get(key, {})
-            df.at[idx, "check_anomaly"] = True
-            df.at[idx, "anomaly_type"] = result.get("anomaly_type", "none")
-            df.at[idx, "anomaly_reason"] = result.get("anomaly_reason", row.get("_outlier_reasons", ""))
+            df.at[idx, "check_anomaly"] = True  # type: ignore[call-overload]
+            df.at[idx, "anomaly_type"] = result.get("anomaly_type", "none")  # type: ignore[call-overload]
+            df.at[idx, "anomaly_reason"] = result.get("anomaly_reason", row.get("_outlier_reasons", ""))  # type: ignore[call-overload]
 
             if OUTLIER_CACHE_FIRST:
                 cache[key] = {
-                    "anomaly_type": df.at[idx, "anomaly_type"],
-                    "anomaly_reason": df.at[idx, "anomaly_reason"],
+                    "anomaly_type": df.at[idx, "anomaly_type"],  # type: ignore[index]
+                    "anomaly_reason": df.at[idx, "anomaly_reason"],  # type: ignore[index]
                 }
                 cache_updated = True
 
@@ -700,18 +717,26 @@ class DataPipeline:
         cache_misses = 0
 
         provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-        llm_available = True
-
-        if provider == "openai" and not OPENAI_API_KEY:
-            llm_available = False
-        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-            llm_available = False
-        elif provider == "gemini" and not GEMINI_API_KEY:
-            llm_available = False
-        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-            llm_available = False
-        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-            llm_available = False
+        
+        # Validate LLM credentials using unified client
+        config = LLMConfig(
+            provider=provider,
+            model=LLM_MODEL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+            timeout_seconds=LLM_TIMEOUT_SECONDS,
+            openai_api_key=OPENAI_API_KEY,
+            azure_api_key=AZURE_OPENAI_API_KEY,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            azure_deployment=AZURE_OPENAI_DEPLOYMENT,
+            azure_api_version=AZURE_OPENAI_API_VERSION,
+            gemini_api_key=GEMINI_API_KEY,
+            anthropic_api_key=ANTHROPIC_API_KEY,
+            perplexity_api_key=PERPLEXITY_API_KEY,
+            perplexity_base_url=PERPLEXITY_BASE_URL,
+        )
+        client = LLMClient(config)
+        llm_available = client.validate_credentials()
 
         if not llm_available:
             logger.warning(
@@ -1006,7 +1031,7 @@ class DataPipeline:
             # Also save a copy as TSV for easier inspection
             tsv_filepath = os.path.splitext(filepath)[0] + ".tsv"
             try:
-                self.processed_data.to_csv(tsv_filepath, sep="\t", index=False)
+                self.processed_data.to_csv(tsv_filepath, sep="\t", index=False)  # type: ignore[union-attr]
                 logger.info(f"Processed data also saved to TSV: {tsv_filepath}")
             except Exception as e:
                 logger.error(f"Failed to save processed data as TSV: {e}")
