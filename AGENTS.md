@@ -10,315 +10,56 @@ Guidelines for AI agents working on software development tasks, focusing on non-
 
 ### 1.1 Architecture Patterns
 
-**Separation of Concerns**
-- Pure functions for transformations (easy to test, no side effects)
-- Orchestration functions handle I/O and coordination
-- Configuration separate from implementation logic
+**Key Principles:**
+- **Separation of Concerns**: Pure functions for transformations, orchestration functions for I/O
+- **Factory Pattern**: Use for extensible model creation
+- **Configuration Objects**: Use dataclasses with explicit dependencies (avoid global config)
+- **Fail Fast**: Validate inputs at function entry with actionable error messages
+- **Type Hints**: Add to all function signatures
 
-**Example: Testable vs Embedded I/O**
-```python
-# Hard to test - everything embedded
-def process_and_save(filename: str):
-    data = pd.read_csv(filename)
-    processed = transform(data)
-    processed.to_csv("output.csv")
+### 1.2 Error Handling
 
-# Better - testable transformation
-def process_data(data: pd.DataFrame) -> pd.DataFrame:
-    return transform(data)
-```
+- Provide actionable error messages (e.g., "No data found. Run: python main.py --prepare")
+- Validate at system boundaries (API endpoints, file I/O, model inputs)
+- Use graceful degradation with fallback values where appropriate
 
-**Factory Pattern for Extensibility**
-```python
-class RecommenderFactory:
-    _registry: Dict[str, Type[BaseRecommender]] = {}
-    
-    @classmethod
-    def register(cls, name: str, recommender_class: Type[BaseRecommender]):
-        cls._registry[name] = recommender_class
-    
-    @classmethod
-    def create(cls, name: str, **kwargs) -> BaseRecommender:
-        if name not in cls._registry:
-            raise ValueError(f"Unknown recommender: {name}")
-        return cls._registry[name](**kwargs)
-```
+### 1.3 Function Length and Complexity
 
-### 1.2 Data Validation Patterns
+**Length Guidelines:**
+- **20-50 lines**: Ideal range
+- **50-75 lines**: Consider refactoring
+- **Over 100 lines**: Strong refactoring signal
 
-**Validate at System Boundaries**
-- API endpoints: validate incoming requests
-- File I/O: validate schema and content
-- Model inputs: validate shape, types, ranges
+**Red Flags Indicating Split Needed:**
+- Multiple levels of nested loops/conditionals (>3 levels)
+- Many local variables (>7-10)
+- Multiple distinct responsibilities
+- Hard to name accurately (contains "and", "or", "then")
+- Difficult to write concise docstring
+
+**Refactoring Techniques:**
+- **Extract Method**: Break into focused helper functions
+- **Compose Functions**: Chain transformations with `.pipe()` or function composition
+- **Helper Functions**: Extract complex conditionals
 
 ```python
-def validate_transaction_data(df: pd.DataFrame) -> bool:
-    """Validate transaction data schema and content."""
-    required = ["InvoiceNo", "StockCode", "Quantity", "CustomerID"]
-    
-    if not all(col in df.columns for col in required):
-        raise ValueError(f"Missing columns: {required}")
-    
-    if not pd.api.types.is_numeric_dtype(df["Quantity"]):
-        raise TypeError("Quantity must be numeric")
-    
-    # Log warnings for data quality issues
-    if df["Quantity"].isna().any():
-        logger.warning("Found NaN values in Quantity")
-    
-    return True
-```
-
-**Fail Fast Principle**
-```python
-def fit_model(transactions: List[List[str]], bundles: List[tuple]):
-    # Validate immediately at function entry
-    if not transactions:
-        raise ValueError("transactions cannot be empty")
-    if not bundles:
-        raise ValueError("bundles cannot be empty")
-    if not self._fitted:
-        raise RuntimeError("Engine must be fitted first")
-    # ... proceed with logic
-```
-
-### 1.3 Configuration Management
-
-**Structured Configuration Objects**
-```python
-@dataclass
-class TrainingConfig:
-    n_splits: int = 10
-    test_size: float = 0.2
-    random_state: int = 42
-    enable_cache: bool = True
-    cache_dir: str = ".cache"
-
-def train_model(data: pd.DataFrame, config: TrainingConfig):
-    """Training with explicit configuration dependency."""
-    pass
-```
-
-**Environment-Based Configuration**
-- Development vs Production settings
-- Feature flags for experimental features
-- Secrets management (API keys, credentials)
-
-### 1.4 Error Handling Strategies
-
-**Contextual Error Messages**
-```python
-# Poor
-if not data:
-    raise ValueError("Invalid data")
-
-# Better - actionable error message
-if not data:
-    raise ValueError(
-        "No data found. Please run: python main.py --prepare"
-    )
-```
-
-**Graceful Degradation**
-```python
-def load_cached_results(cache_file: str) -> Optional[dict]:
-    """Load cached results with fallback to None."""
-    try:
-        with open(cache_file) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        logger.warning(f"Cache miss: {e}. Will compute fresh results.")
-        return None
-```
-
-### 1.5 Function Length and Complexity
-
-**Recommended Length Guidelines**
-- **20-50 lines**: Ideal range for most functions
-- **50-75 lines**: Consider refactoring if possible
-- **Over 100 lines**: Strong indicator the function needs splitting
-
-**Signs a Function Needs Splitting**
-```python
-# Red flags indicating refactoring needed:
-# 1. Multiple levels of nested loops/conditionals (>3 levels)
-# 2. Many local variables (>7-10)
-# 3. Multiple distinct responsibilities
-# 4. Hard to name accurately (name contains "and", "or", "then")
-# 5. Difficult to write a concise docstring
-# 6. Scrolling required to see the entire function
-```
-
-**Refactoring Techniques**
-
-**Extract Method Pattern**
-```python
-# Before - 80+ line function
+# Before: 100+ line function
 def process_order(order: dict) -> dict:
-    # 20 lines of validation
-    if not order.get("customer_id"):
-        raise ValueError("Missing customer_id")
-    # ... more validation
-    
-    # 25 lines of price calculation
-    total = 0
-    for item in order["items"]:
-        price = item["price"]
-        quantity = item["quantity"]
-        discount = calculate_discount(item)
-        # ... complex pricing logic
-    
-    # 20 lines of inventory check
-    for item in order["items"]:
-        # ... complex inventory logic
-    
-    # 15 lines of order creation
-    # ... database operations
-    
-    return result
+    # Validation, pricing, inventory, order creation all in one
+    ...
 
-# After - Multiple focused functions
+# After: Orchestration + focused functions
 def process_order(order: dict) -> dict:
-    """Process order with validation, pricing, and inventory checks."""
     validate_order(order)
     total = calculate_order_total(order)
     check_inventory_availability(order["items"])
     return create_order_record(order, total)
-
-def validate_order(order: dict) -> None:
-    """Validate order has required fields."""
-    if not order.get("customer_id"):
-        raise ValueError("Missing customer_id")
-    if not order.get("items"):
-        raise ValueError("Missing items")
-
-def calculate_order_total(order: dict) -> float:
-    """Calculate total price with discounts."""
-    total = 0
-    for item in order["items"]:
-        total += calculate_item_price(item)
-    return total
 ```
 
-**Compose Functions Pattern**
-```python
-# Break complex logic into composable steps
-def prepare_dataset(data: pd.DataFrame) -> pd.DataFrame:
-    """Prepare dataset through transformation pipeline."""
-    return (
-        remove_duplicates(data)
-        .pipe(handle_missing_values)
-        .pipe(normalize_columns)
-        .pipe(encode_categorical)
-        .pipe(validate_schema)
-    )
-```
-
-**Use Helper Functions**
-```python
-# Extract complex conditionals
-def is_valid_transaction(txn: dict) -> bool:
-    """Check if transaction meets all validity criteria."""
-    return (
-        has_required_fields(txn) and
-        is_positive_amount(txn) and
-        is_within_date_range(txn) and
-        is_authorized_customer(txn)
-    )
-
-# Use in main logic
-def process_transactions(transactions: List[dict]) -> List[dict]:
-    return [txn for txn in transactions if is_valid_transaction(txn)]
-```
-
-**Acceptable Exceptions to Length Guidelines**
-
-**1. Well-Documented Complex Algorithms**
-```python
-def calculate_recommendation_score(
-    user_history: List[str],
-    candidate_items: List[str],
-    weights: dict
-) -> Dict[str, float]:
-    """
-    Calculate recommendation scores using collaborative filtering.
-    
-    Algorithm: Modified matrix factorization with temporal decay
-    Based on: [Research Paper Reference]
-    
-    Steps:
-    1. Build user-item matrix
-    2. Apply temporal decay weights
-    3. Compute similarity scores
-    4. Normalize and rank
-    """
-    # Step 1: Build user-item matrix (15 lines with comments)
-    # ...
-    
-    # Step 2: Apply temporal decay (12 lines with comments)
-    # ...
-    
-    # Step 3: Compute similarity (18 lines with comments)
-    # ...
-    
-    # Step 4: Normalize and rank (10 lines)
-    # ...
-    
-    return scores
-# Total: ~60 lines, but acceptable due to:
-# - Clear structure with commented sections
-# - Single cohesive algorithm
-# - Would be harder to understand if split
-```
-
-**2. Configuration/Setup Functions**
-```python
-def setup_application_config() -> Config:
-    """Initialize application configuration from multiple sources."""
-    # May be longer due to many configuration options
-    # but represents a single logical operation
-```
-
-**3. Switch/Case Style Logic**
-```python
-def handle_event(event_type: str, data: dict) -> Response:
-    """Route events to appropriate handlers."""
-    # Match/case or if/elif chains can be long
-    # but represent single routing responsibility
-    match event_type:
-        case "order_created": return handle_order_created(data)
-        case "order_updated": return handle_order_updated(data)
-        # ... 20+ event types
-```
-
-**Practical Refactoring Example**
-
-```python
-# Before: 120-line function doing too much
-def train_and_evaluate_models(data_path: str, config: dict):
-    # Data loading (15 lines)
-    # Data cleaning (25 lines)
-    # Feature engineering (30 lines)
-    # Model training loop (35 lines)
-    # Evaluation (15 lines)
-    pass
-
-# After: Clear separation of concerns
-def train_and_evaluate_models(data_path: str, config: dict):
-    """Main training pipeline orchestration."""
-    raw_data = load_data(data_path)
-    clean_data = clean_dataset(raw_data)
-    features = engineer_features(clean_data, config)
-    models = train_models(features, config)
-    return evaluate_models(models, features)
-```
-
-**Key Principles**
-- Each function should do one thing well
-- Functions should be at a single level of abstraction
-- Compose small functions into larger workflows
-- Name extraction functions clearly to show intent
-- Don't split just to hit a line count - maintain logical cohesion
+**Acceptable Exceptions:**
+- Well-documented complex algorithms (single cohesive algorithm)
+- Configuration/setup functions (many options, single logical operation)
+- Switch/case routing logic (single responsibility despite length)
 
 ---
 
@@ -326,90 +67,12 @@ def train_and_evaluate_models(data_path: str, config: dict):
 
 ### 2.1 Docstring Essentials
 
-**Comprehensive Function Documentation**
-```python
-def fit_all_with_kfold(
-    self,
-    transactions: List[List[str]],
-    bundles: List[tuple],
-    n_splits: int = 10
-) -> Dict[str, Dict[str, float]]:
-    """
-    Train all recommenders using k-fold cross-validation.
-    
-    Args:
-        transactions: List of transaction baskets with item IDs
-        bundles: List of bundle tuples for training
-        n_splits: Number of folds (default: 10)
-    
-    Returns:
-        Dict mapping model names to metrics:
-        {'model': {'accuracy': 0.85, 'std_accuracy': 0.02, ...}}
-    
-    Raises:
-        ValueError: If transactions or bundles are empty
-    """
-```
+- Document public APIs with Args, Returns, Raises
+- Skip obvious getters/setters
+- Comment the "why" not the "what"
+- Add comments for: complex algorithms, performance optimizations, workarounds, business logic
 
-**When NOT to Document**
-- Obvious getters/setters
-- Self-explanatory variable names
-- Implementation details that may change
-
-### 2.2 Code Comments Philosophy
-
-**Comment the "Why", Not the "What"**
-```python
-# Good - Explains reasoning
-# Sample before bundle generation to avoid O(n²) complexity
-# Bundle generation is the bottleneck operation
-if quick_mode:
-    sample_size = max(25, len(transactions) // 200)
-
-# Avoid - States the obvious
-# Increment counter by 1
-counter += 1
-```
-
-**When to Add Comments**
-- Complex algorithms with non-obvious logic
-- Performance optimizations
-- Workarounds for library limitations
-- Business domain knowledge
-- Security considerations
-
-### 2.3 README Structure for Projects
-
-```markdown
-# Project Name
-
-## Quick Start (30 seconds)
-```bash
-pip install -r requirements.txt
-python main.py --prepare
-python main.py --api
-```
-
-## Features
-- What it does (3-5 bullet points)
-- Key capabilities
-
-## Usage Examples
-```python
-# Minimal working example
-```
-
-## Configuration
-- Environment variables
-- Config file options
-
-## Development
-- Running tests
-- Code style
-- Contributing
-```
-
-### 2.4 Documentation File Policy
+### 2.2 Documentation File Policy
 
 **Avoid Creating New .md Files**
 - **DO NOT** create new markdown documentation files unless explicitly requested
@@ -429,89 +92,15 @@ python main.py --api
 ❌ "Change log" markdown files
 ```
 
-**When New .md Files ARE Appropriate:**
-- User explicitly requests: "Create a DEPLOYMENT.md"
-- Large architectural documentation for complex systems
-- API documentation for public libraries
-- Contributing guidelines for open-source projects
-
-**Rationale:**
-- Reduces documentation sprawl and maintenance burden
-- Keeps documentation close to code (where it's most likely to be updated)
-- Prevents duplication between docs and docstrings
-- Makes it easier to find information (one README vs many scattered files)
-
 ---
 
-## 3. Validation Best Practices
+## 3. Testing Best Practices
 
-### 3.1 Testing Strategy
-
-**Test Pyramid**
-1. **Unit Tests (70%)**: Pure functions, isolated components
-2. **Integration Tests (20%)**: Component interactions
-3. **End-to-End Tests (10%)**: Full workflows
-
-**What to Test**
-- ✅ Happy path with valid inputs
-- ✅ Edge cases (empty, null, boundary values)
-- ✅ Error conditions (invalid inputs, missing data)
-- ✅ Integration points between components
-- ❌ Don't test library code
-- ❌ Don't test trivial getters/setters
-
-### 3.2 Pytest Patterns
-
-**Fixtures for Reusability**
-```python
-@pytest.fixture
-def sample_data():
-    """Reusable test data across tests."""
-    transactions = [["A", "B"], ["B", "C"]]
-    bundles = [("A", "B"), ("B", "C")]
-    return transactions, bundles
-
-def test_kfold_validation(sample_data):
-    transactions, bundles = sample_data
-    # Test logic here
-```
-
-**Parametrized Tests for Coverage**
-```python
-@pytest.mark.parametrize("threshold,expected_count", [
-    (0.1, 10),
-    (0.5, 5),
-    (0.9, 1),
-])
-def test_threshold_filtering(threshold, expected_count):
-    results = filter_by_threshold(data, threshold)
-    assert len(results) == expected_count
-```
-
-### 3.3 Performance Validation
-
-**Timing Critical Paths**
-```python
-@contextmanager
-def timer(name: str):
-    start = time.time()
-    yield
-    logger.info(f"{name}: {time.time() - start:.2f}s")
-
-with timer("K-Fold Training"):
-    metrics = engine.fit_all_with_kfold(txns, bundles)
-```
-
-**Memory Profiling for Large Datasets**
-```python
-import tracemalloc
-
-tracemalloc.start()
-result = expensive_operation(large_data)
-current, peak = tracemalloc.get_traced_memory()
-logger.info(f"Peak memory: {peak / 1024**2:.1f} MB")
-tracemalloc.stop()
-```
+- **Test Pyramid**: 70% unit, 20% integration, 10% e2e
+- Test: happy path, edge cases, error conditions
+- Use pytest fixtures for reusability
+- Use parametrized tests for coverage
+- Skip testing: library code, trivial getters/setters
 
 ---
 
@@ -628,64 +217,15 @@ Before running any Python commands:
 
 ### 5.1 DRY Principle Applied
 
-**Before - Repetitive Code:**
-```python
-if models_config["naive_bayes"] and "naive_bayes" in metrics:
-    nb_acc = metrics["naive_bayes"]["accuracy"]
-    # ... 15 lines of comparison logic
+Extract repetitive logic into reusable functions. If you see the same code block repeated with minor variations, extract it into a function that handles all cases.
 
-if models_config["svm"] and "svm" in metrics:
-    svm_acc = metrics["svm"]["accuracy"]
-    # ... same 15 lines duplicated
-```
+### 5.2 Type-Safe Returns
 
-**After - Extracted Function:**
-```python
-def format_comparison_table(
-    metrics1: dict, 
-    metrics2: dict, 
-    enabled_models: dict
-) -> str:
-    """Single function handles all models."""
-    # Implement once, use for all models
-```
-
-### 5.2 Result Objects Over Dicts
-
-**Type-Safe Returns**
-```python
-@dataclass
-class EvaluationResult:
-    accuracy: float
-    precision: float
-    recall: float
-    f1: float
-    std_accuracy: Optional[float] = None
-    n_splits: int = 1
-    
-    def to_dict(self) -> Dict[str, float]:
-        return {k: v for k, v in asdict(self).items() if v is not None}
-
-# Usage - type hints provide intellisense
-result: EvaluationResult = evaluate_model(data)
-print(result.accuracy)  # IDE knows this is float
-```
+Use dataclasses for structured returns instead of dicts - provides type safety and IDE support.
 
 ### 5.3 Configuration Injection
 
-**Avoid Global Configuration**
-```python
-# Anti-pattern
-config = load_config()  # Global
-
-def process():
-    if config["enable_cache"]:  # Implicit dependency
-        ...
-
-# Better - explicit dependencies
-def process(config: Config):
-    if config.enable_cache:
-        ...
+Avoid global configuration. Pass config objects explicitly as function parameters for testability and clarity.
 ```
 
 ---
@@ -759,35 +299,27 @@ tests/         # Test suite
 
 ## 8. Agent Communication Best Practices
 
-### 8.1 Status Updates
-
 **Progress Reporting:**
-- Report what was found during research phase
+- Report findings during research phase
 - Explain key design decisions
-- Highlight any trade-offs or limitations
-- Confirm completion with evidence (test output, error-free validation)
-
-### 8.2 Problem Escalation
+- Highlight trade-offs or limitations
+- Confirm completion with evidence
 
 **When to Ask for Clarification:**
 - Ambiguous requirements with multiple valid interpretations
 - Conflicts with existing patterns
 - Missing dependencies or data
-- Performance vs accuracy trade-offs
 
 **When to Proceed Autonomously:**
 - Clear implementation path exists
 - Following established patterns
 - Standard error handling
-- Routine refactoring
 
 ---
 
 ## 9. Version Control Best Practices
 
-### 9.1 Git Commit Messages
-
-**Structure:**
+**Commit Message Structure:**
 ```
 <type>: <subject>
 
@@ -796,132 +328,23 @@ tests/         # Test suite
 <footer>
 ```
 
-**Commit Types:**
-- `feat:` New feature
-- `fix:` Bug fix
-- `docs:` Documentation changes
-- `test:` Adding or updating tests
-- `refactor:` Code refactoring
-- `perf:` Performance improvements
-- `chore:` Build process, dependencies, or tooling
+**Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`
 
 **Best Practices:**
-- ✅ Use descriptive, imperative mood ("Add feature" not "Added feature")
-- ✅ Keep subject line under 72 characters
-- ✅ Use body to explain what and why, not how
-- ✅ Reference issue numbers in footer (e.g., "Fixes #123")
-- ❌ **Do NOT use emoticons or emojis** (keeps commits professional and searchable)
-- ❌ Do NOT use vague messages ("fix stuff", "updates", "wip")
+- Use descriptive, imperative mood ("Add feature" not "Added feature")
+- Keep subject under 72 characters
+- Explain what and why, not how
+- Reference issue numbers (e.g., "Fixes #123")
+- **NO emoticons or emojis**
+- NO vague messages ("fix stuff", "updates", "wip")
 
-**Examples:**
-
-Good:
-```
-feat: Add API endpoint testing documentation to TESTING_GUIDE.md
-
-Add comprehensive instructions for testing Flask API endpoints including
-test patterns, mocking strategies, and command examples.
-
-Updates Test Statistics table from 128 to 171 total tests.
-```
-
-Bad:
-```
-✨ Add cool new stuff 🚀
-
-Updated some files
-```
-
-### 9.2 Branch Naming
-
-**Patterns:**
-- `feature/<description>` - New features
-- `fix/<description>` - Bug fixes
-- `test/<description>` - Test additions
-- `docs/<description>` - Documentation
-- `refactor/<description>` - Code refactoring
-
-**QA/Integration Branches:**
-- `qa` - Quality assurance branch
-- `staging` - Pre-production environment
-- `integration` - Feature integration
-- `develop` - Main development branch (Git Flow)
+**Branch Naming:**
+- `feature/<description>`, `fix/<description>`, `test/<description>`, `docs/<description>`, `refactor/<description>`
+- QA/Integration: `qa`, `staging`, `integration`, `develop`
 
 ---
 
-## 10. Testing Best Practices
-
-### 10.1 Test Organization
-
-```python
-class TestBundleRecommendationEngine:
-    """Group related tests in classes."""
-    
-    @pytest.fixture
-    def engine(self):
-        """Shared setup."""
-        return BundleRecommendationEngine()
-    
-    def test_empty_input_raises_error(self, engine):
-        """Test error conditions."""
-        with pytest.raises(ValueError, match="cannot be empty"):
-            engine.fit_all_with_random_split([], [])
-    
-    def test_kfold_metrics_structure(self, engine):
-        """Test return value structure."""
-        metrics = engine.fit_all_with_kfold(txns, bundles)
-        assert "accuracy" in metrics["model_name"]
-        assert "std_accuracy" in metrics["model_name"]
-```
-
-### 10.2 Integration Tests
-
-**Test Real Workflows:**
-```python
-def test_end_to_end_recommendation_workflow():
-    """Test complete pipeline from data to prediction."""
-    # Setup
-    pipeline = DataPipeline()
-    pipeline.load_raw_data()
-    
-    # Process
-    transactions = pipeline.create_transaction_baskets()
-    bundles = pipeline.generate_product_bundles()
-    
-    # Train
-    engine = BundleRecommendationEngine()
-    engine.add_recommender("nb", NaiveBayesBundleRecommender())
-    metrics = engine.fit_all_with_random_split(
-        [list(t) for t in transactions["Items"]], 
-        [tuple(b) for b in bundles]
-    )
-    
-    # Validate
-    assert metrics["nb"]["accuracy"] > 0.5
-    
-    # Predict
-    recs = engine.recommend_bundles(["item1", "item2"])
-    assert "bundles" in recs
-    assert "confidence" in recs
-```
-
----
-
-## 11. References & Resources
-
-**Python Standards:**
-- PEP 8: Style Guide
-- PEP 257: Docstring Conventions
-- PEP 484: Type Hints
-
-**Testing:**
-- pytest documentation
-- unittest.mock for mocking
-
-**Design Patterns:**
-- Factory Pattern for model creation
-- Strategy Pattern for interchangeable algorithms
-- Pipeline Pattern for data transformations
+## 10. References & Resources
 
 **Project-Specific:**
 - See `ARCHITECTURE.md` for system design
