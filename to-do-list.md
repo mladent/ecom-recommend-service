@@ -121,16 +121,137 @@
 
 - [ ] **Update Data Pipeline LLM Integration** (P0)
   - **File:** [src/data_pipeline.py](src/data_pipeline.py)
-  - **Methods to Update:**
-    - `_normalize_descriptions()` - line ~340-350 validation
-    - `_enrich_categories()` - line ~370-385 validation
-    - `_flag_anomalies()` - line ~530-545 validation
-    - `_extract_contexts()` - line ~680-695 validation
-  - **Tasks:**
-    - Replace inline LLM validation with `LLMClient.validate_credentials()`
-    - Remove duplicated provider availability checks
-    - Use LLMClient instances instead of direct utils calls
-  - **Acceptance Criteria:** No duplicate validation code; all pipeline tests pass
+  - **Strategy:** Hybrid approach—extract helper methods in pipeline, keep utils functions unchanged (zero breaking changes)
+  - **Error Handling:** Standardize LLMQuotaExceededError across all 3 methods (graceful fallback behavior)
+  - **Testing:** Patch LLMClient methods in test fixtures instead of urllib
+  - **TL;DR:** Consolidate duplicate LLM provider validation logic from 3 methods into 5 reusable pipeline helpers. Eliminate ~95 lines of duplicate provider/config dispatch patterns. Keep existing utils function calls. Standardize error handling. Update tests to mock LLMClient directly. Outcome: ~25 line reduction + zero breaking changes + faster Phase 2 integration.
+  
+  - **Step 1: Create Pipeline Helper Methods** (Prerequisite)
+    - Create 5 new helper methods in [src/data_pipeline.py](src/data_pipeline.py) after `__init__` (after line ~310):
+      1. `_get_api_key_for_provider(provider: str) -> Optional[str]` (3 lines)
+         - Returns correct API key based on provider (eliminates 7-line ternary chains)
+      2. `_get_base_url_for_provider(provider: str) -> Optional[str]` (2 lines)
+         - Returns base_url only for Perplexity (eliminates 3 separate checks)
+      3. `_build_pipeline_llm_config() -> LLMConfig` (20 lines)
+         - Consolidates LLMConfig creation from global config (eliminates 3x 18-line blocks)
+      4. `_handle_llm_quota_error_standardized(exc: Exception, fallback_strategy: str) -> None` (15 lines)
+         - Centralized quota error handling with standardized behavior
+         - Parameters: `fallback_strategy` ∈ {"fill_nan", "use_heuristic", "skip_batch"}
+      5. `_validate_and_load_cache(cache_path: str, enabled: bool, force_reprocess: bool) -> Dict` (5 lines)
+         - Combined cache loading logic (used by _enrich, _flag, _extract)
+    - Benefits: ~95 lines reduction, single source of truth for provider dispatch, easier Phase 2 integration
+  
+  - **Step 2: Refactor _enrich_categories() Method** 🎯
+    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [337-504](src/data_pipeline.py#L337-L504) (168 lines)
+    - **Changes:**
+      1. Replace lines 360-378 with: `config = self._build_pipeline_llm_config()`
+      2. Replace lines 424-431 with: `api_key=self._get_api_key_for_provider(provider),`
+      3. Replace line 436 with: `base_url=self._get_base_url_for_provider(provider),`
+      4. Replace try-except quota handling (lines 447-453) with: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="fill_nan")`
+      5. Update cache loading at line 351-357 with helper: `cache = self._validate_and_load_cache(ENRICHMENT_CACHE_PATH, ENRICHMENT_ENABLED, self.force_reprocess)`
+    - **Result:** 168 lines → 145 lines (~14% reduction)
+  
+  - **Step 3: Refactor _flag_anomalies() Method** 🎯
+    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [505-693](src/data_pipeline.py#L505-L693) (189 lines)
+    - **Changes:**
+      1. Replace lines 542-560 LLMConfig creation: `config = self._build_pipeline_llm_config()`
+      2. Replace lines 626-633 provider key ternary: `api_key=self._get_api_key_for_provider(provider),`
+      3. Replace line 638 Perplexity check: `base_url=self._get_base_url_for_provider(provider),`
+      4. Standardize error handling with: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="use_heuristic")`
+      5. Cache helper: `cache = self._validate_and_load_cache(ANOMALY_CACHE_PATH, OUTLIER_ENABLED, self.force_reprocess)`
+    - **Note:** Keep `llm_available` flag logic—it's used for fallback activation
+    - **Result:** 189 lines → 162 lines (~14% reduction)
+  
+  - **Step 4: Refactor _extract_contexts() Method** 🎯
+    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [695-825](src/data_pipeline.py#L695-L825) (131 lines)
+    - **Changes:**
+      1. Replace lines 720-738 LLMConfig: `config = self._build_pipeline_llm_config()`
+      2. Replace lines 773-780 provider key ternary: `api_key=self._get_api_key_for_provider(provider),`
+      3. Replace line 782 base_url: `base_url=self._get_base_url_for_provider(provider),`
+      4. Standardize error handling: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="skip_batch")`
+      5. Cache helper: `cache = self._validate_and_load_cache(CONTEXT_CACHE_PATH, CONTEXT_ENABLED, self.force_reprocess)`
+    - **Result:** 131 lines → 110 lines (~16% reduction)
+  
+  - **Step 5: Update Test Fixtures & Mocking** ✅
+    - **File:** [tests/test_data_pipeline.py](tests/test_data_pipeline.py)
+    - **Current Fixture:** `mock_llm_functions` (lines 127-189) patches utils functions
+    - **Changes:**
+      1. Create new `mock_llm_client` fixture that patches `LLMClient` methods directly
+      2. Update existing 4 test cases to use new fixture instead of `mock_llm_functions`
+      3. Keep `mock_llm_functions` as fallback for backward compat during transition
+      4. Add tests for new helper methods:
+         - `test_get_api_key_for_provider()` - verify all 5 providers map correctly
+         - `test_build_pipeline_llm_config()` - verify config creation
+         - `test_handle_llm_quota_error_standardized()` - verify fallback behaviors
+    - **Tests Updated:** 4 existing + 3 new helper tests
+    - **Result:** Better aligned with LLMClient architecture, easier to maintain
+  
+  - **Step 6: Verify Error Handling Consistency** ✅
+    - **Standardize LLMQuotaExceededError Behaviors:**
+      | Method | Before | After (Standardized) |
+      |--------|--------|-----|
+      | `_enrich_categories` | Fill remaining with NaN | Graceful fallback → Fill NaN ✅ |
+      | `_flag_anomalies` | Set `llm_available=False`, break loop, use heuristic | Graceful fallback → Use heuristic ✅ |
+      | `_extract_contexts` | Set `llm_available=False`, return empty contexts | Graceful fallback → Return empty contexts ✅ |
+    - **Unified Pattern:**
+      ```
+      try:
+          results = utils.batch_llm_function(...)
+      except LLMQuotaExceededError as exc:
+          logger.warning(f"LLM quota exceeded: {exc}. Using fallback strategy.")
+          self._handle_llm_quota_error_standardized(exc, fallback_strategy)
+      ```
+    - **Outcome:** All three methods handle quota errors consistently while preserving method-specific fallback logic
+  
+  - **Step 7: Run Tests & Validate** ✅
+    - **Commands:**
+      ```bash
+      pytest tests/test_data_pipeline.py -v
+      pytest tests/ -v --cov=src/data_pipeline --cov-report=term
+      python -c "from src.data_pipeline import DataPipeline; print('✓ Import OK')"
+      ```
+    - **Acceptance Criteria:**
+      - ✅ All 45 existing data_pipeline tests pass
+      - ✅ 3 new helper method tests pass
+      - ✅ 4 updated test cases pass with new mocking strategy
+      - ✅ Code coverage ≥ 46% (maintained or improved)
+      - ✅ No regressions in API or recommendation_engine tests
+  
+  - **Step 8: Code Review Checklist** ✅
+    - **Verify:**
+      - [ ] No duplicate provider dispatch logic remains (grep for `if provider == "openai"`)
+      - [ ] All 3 LLMConfig creations consolidated into 1 helper method
+      - [ ] All quota error handling uses standardized pattern
+      - [ ] New helper methods have docstrings with type hints
+      - [ ] Cache logic unified and reusable
+      - [ ] Test fixtures updated to patch LLMClient, not utils
+      - [ ] No breaking changes to utils.py API (backward compatible)
+      - [ ] All imports of LLMClient, LLMConfig intact
+      - [ ] Commit message follows: `refactor(pipeline): consolidate LLM integration and standardize error handling`
+  
+  - **Verification & Expected Results:**
+    - **How to test:**
+      1. Run pipeline-specific tests: `pytest tests/test_data_pipeline.py::TestDataPipeline -v`
+      2. Run all tests to validate no regressions: `pytest tests/ --tb=short`
+      3. Check code duplication reduction: `grep -n "if provider ==" src/data_pipeline.py` (should find 0 results)
+      4. Verify imports work: `python -c "from src.data_pipeline import DataPipeline; p = DataPipeline(force_reprocess=False); print('✓ Ready')"`
+    - **Expected Results:**
+      - ✅ All 45 pipeline tests pass (100%)
+      - ✅ All 191 total tests pass (100%)
+      - ✅ Code metrics: `~480 lines → ~455 lines` (-5.2% or ~25 line reduction in target file)
+      - ✅ Duplicate code: `~95 lines eliminated` of provider/config dispatch patterns
+      - ✅ Helper methods: 5 new reusable functions (20 lines total)
+      - ✅ Zero breaking changes to public API
+      - ✅ Ready for Phase 2 config refactoring (config injection patterns established)
+  
+  - **Acceptance Criteria:** 
+    - ✅ No duplicate validation code; provider dispatch consolidated
+    - ✅ All pipeline tests pass (45/45)
+    - ✅ All integration tests pass (191/191 total)
+    - ✅ Error handling standardized across 3 methods
+    - ✅ Helper methods documented with type hints
+    - ✅ Zero breaking changes to utils.py API
+    - ✅ Ready for Phase 2 (config injection foundations established)
 
 - [ ] **Update Recommendation Engine** (P0)
   - **File:** [src/recommendation_engine.py](src/recommendation_engine.py)
