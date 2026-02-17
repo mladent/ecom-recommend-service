@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import hashlib
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, cast
 from jsonschema import ValidationError, validate
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -764,8 +764,12 @@ def select_alternatives_with_llm(
         
         _validate_json_schema(result, "llm_select_alternatives.json", "alternative selection")
         
-        alternatives: List[Dict[str, Any]] = result.get("alternatives", [])
-        return alternatives[:max_alternatives] if isinstance(alternatives, list) else []
+        # Safely extract and validate alternatives
+        alternatives = result.get("alternatives", [])
+        if not isinstance(alternatives, list):
+            return []
+        
+        return cast(List[Dict[str, Any]], alternatives)[:max_alternatives]
         
     except Exception as exc:
         if _handle_llm_quota_error(exc):
