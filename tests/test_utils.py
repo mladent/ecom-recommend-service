@@ -1612,7 +1612,7 @@ class TestHttpPostJson:
             "https://api.example.com",
             401,
             "Unauthorized",
-            {},
+            None,  # type: ignore[arg-type]
             None
         )
         
