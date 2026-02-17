@@ -60,7 +60,7 @@ class LLMConfig:
     azure_api_key: Optional[str] = None
     azure_endpoint: Optional[str] = None
     azure_deployment: Optional[str] = None
-    azure_api_version: str = "2024-06-01"
+    azure_api_version: Optional[str] = "2024-06-01"
     
     # Google Gemini credentials
     gemini_api_key: Optional[str] = None
@@ -70,7 +70,7 @@ class LLMConfig:
     
     # Perplexity credentials
     perplexity_api_key: Optional[str] = None
-    perplexity_base_url: str = "https://api.perplexity.ai"
+    perplexity_base_url: Optional[str] = "https://api.perplexity.ai"
 
 
 class BaseLLMProvider(ABC):
@@ -216,10 +216,11 @@ class AzureProvider(BaseLLMProvider):
         if not self.validate_credentials():
             raise RuntimeError("Azure OpenAI credentials or endpoint missing")
         
+        api_version = self.config.azure_api_version or "2024-06-01"
         url = (
             f"{self.config.azure_endpoint}/openai/deployments/"
             f"{self.config.azure_deployment}/chat/completions"
-            f"?api-version={self.config.azure_api_version}"
+            f"?api-version={api_version}"
         )
         
         headers = {
@@ -329,7 +330,7 @@ class PerplexityProvider(BaseLLMProvider):
         if not self.config.perplexity_api_key:
             raise RuntimeError("PERPLEXITY_API_KEY missing")
         
-        base_url = self.config.perplexity_base_url.rstrip("/")
+        base_url = (self.config.perplexity_base_url or "https://api.perplexity.ai").rstrip("/")
         url = f"{base_url}/chat/completions"
         
         headers = {

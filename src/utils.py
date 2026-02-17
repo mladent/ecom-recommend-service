@@ -90,7 +90,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     )
 
 
-def validate_transaction(transaction: List[str]) -> bool:
+def validate_transaction(transaction: Any) -> bool:
     """
     Validate a transaction.
 
@@ -166,7 +166,7 @@ def format_recommendations(recommendations: Dict[str, Any], verbose: bool = Fals
     return "\n".join(output)
 
 
-def normalize_description_basic(text: str) -> str:
+def normalize_description_basic(text: Optional[str]) -> str:
     """Basic normalization: lowercase, strip, collapse spaces, normalize units."""
     if text is None:
         return ""
@@ -191,7 +191,7 @@ def load_json_file(path: str) -> Dict[str, Any]:
         return {}
 
 
-def save_json_file(path: str, data: Dict[str, Any]) -> None:
+def save_json_file(path: str, data: Any) -> None:
     """Save a JSON file safely."""
     if not path:
         return
@@ -222,7 +222,7 @@ def _http_post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any], 
 
 
 def normalize_description_with_llm(
-    text: str,
+    text: Optional[str],
     provider: str,
     model: str,
     temperature: float,
@@ -294,7 +294,7 @@ def normalize_description_with_llm(
 
 
 def enrich_categories_with_llm(
-    text: str,
+    text: Optional[str],
     fields: List[str],
     provider: str,
     model: str,
@@ -375,10 +375,6 @@ def enrich_categories_with_llm(
             raise LLMQuotaExceededError(message) from exc
         logger.warning(f"LLM category enrichment failed ({provider}): {exc}")
         return {field: "NaN" for field in fields}
-
-
-def compute_iqr_bounds(series, multiplier: float = 1.5) -> Tuple[float, float]:
-    """Compute IQR-based lower and upper bounds for a numeric series."""
 
 
 def enrich_categories_batch_with_llm(
@@ -549,7 +545,7 @@ def batch_score_anomalies_with_llm(
         
         # Make LLM call and parse JSON response
         client = LLMClient(config)
-        parsed = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
+        parsed: List[Dict[str, Any]] = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)  # type: ignore[assignment]
         
         # Validate schema
         _validate_json_schema(parsed, "llm_batch_score_anomalies.json", "anomaly scoring")
@@ -575,7 +571,7 @@ def batch_score_anomalies_with_llm(
 
 
 def extract_contexts_with_llm(
-    text: str,
+    text: Optional[str],
     max_contexts: int,
     provider: str,
     model: str,
@@ -783,10 +779,10 @@ def select_alternatives_with_llm(
         _validate_json_schema(result, "llm_select_alternatives.json", "alternative selection")
         
         # Extract alternatives
-        alternatives = result.get("alternatives", [])
+        alternatives: List[Dict[str, Any]] = result.get("alternatives", [])
         if not isinstance(alternatives, list):
             return []
-        return alternatives[:max_alternatives]
+        return alternatives[:max_alternatives]  # type: ignore[return-value]
 
     except Exception as exc:
         message = str(exc)
