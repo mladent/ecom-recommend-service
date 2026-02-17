@@ -114,18 +114,23 @@ class BaseRecommender(ABC):
         return filtered_transactions, num_filtered
 
     @abstractmethod
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        """Fit the model."""
+    def fit(
+        self,
+        transactions: List[List[str]],
+        bundles: List[Tuple[str, ...]],
+        validation_split: float = TRAIN_TEST_SPLIT,
+    ) -> Dict:
+        """Fit the model with transactions and bundles."""
         pass
 
     @abstractmethod
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        """Make predictions."""
+    def predict(self, transactions: List[List[str]]) -> np.ndarray:
+        """Make predictions from transactions."""
         pass
 
     @abstractmethod
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """Predict probabilities."""
+    def predict_proba(self, transactions: List[List[str]]) -> np.ndarray:
+        """Predict probabilities from transactions."""
         pass
 
 
@@ -277,7 +282,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
             all_metrics.append(metrics)
 
         # Use the last model as the fitted model
-        self.model = model
+        self.model = model  # type: ignore[possibly-unbound]
         self.is_fitted = True
 
         # Average metrics across splits
@@ -312,7 +317,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         X = self.mlb.transform(transactions)
         if self.model_type == "gaussian":
             if hasattr(X, "toarray"):
-                X = X.toarray()
+                X = X.toarray()  # type: ignore[union-attr]
 
         return self.model.predict(X)
 
@@ -337,7 +342,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         X = self.mlb.transform(filtered_transactions)
         if self.model_type == "gaussian":
             if hasattr(X, "toarray"):
-                X = X.toarray()
+                X = X.toarray()  # type: ignore[union-attr]
 
         return self.model.predict_proba(X)
 
@@ -356,7 +361,7 @@ class SVMBundleRecommender(BaseRecommender):
         super().__init__(name="SVMBundleRecommender")
         self.kernel = kernel
         self.C = C
-        self.model = SVC(kernel=kernel, C=C, probability=True, random_state=RANDOM_STATE)
+        self.model = SVC(kernel=kernel, C=C, probability=True, random_state=RANDOM_STATE)  # type: ignore[arg-type]
         self.mlb = MultiLabelBinarizer()
         self.scaler = StandardScaler()
         self.feature_names = None
@@ -387,7 +392,7 @@ class SVMBundleRecommender(BaseRecommender):
         self.known_classes = set(self.mlb.classes_)  # Store for filtering in predict
 
         # Convert to dense and scale
-        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_dense = X.toarray() if hasattr(X, "toarray") else X  # type: ignore[union-attr]
         X_scaled = self.scaler.fit_transform(X_dense)
 
         # Create binary labels for each bundle
@@ -444,7 +449,7 @@ class SVMBundleRecommender(BaseRecommender):
         self.known_classes = set(self.mlb.classes_)  # Store for filtering in predict
 
         # Convert to dense and scale
-        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_dense = X.toarray() if hasattr(X, "toarray") else X  # type: ignore[union-attr]
         X_scaled = self.scaler.fit_transform(X_dense)
 
         # Create binary labels for each bundle
@@ -462,7 +467,7 @@ class SVMBundleRecommender(BaseRecommender):
 
             # Fit model
             model = SVC(
-                kernel=self.kernel,
+                kernel=self.kernel,  # type: ignore[arg-type]
                 C=self.C,
                 probability=True,
                 random_state=RANDOM_STATE,
@@ -480,7 +485,7 @@ class SVMBundleRecommender(BaseRecommender):
             all_metrics.append(metrics)
 
         # Use the last model as the fitted model
-        self.model = model
+        self.model = model  # type: ignore[possibly-unbound]
         self.is_fitted = True
 
         # Average metrics across splits
@@ -513,7 +518,7 @@ class SVMBundleRecommender(BaseRecommender):
             raise ValueError("Model not fitted. Call fit() first.")
 
         X = self.mlb.transform(transactions)
-        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_dense = X.toarray() if hasattr(X, "toarray") else X  # type: ignore[union-attr]
         X_scaled = self.scaler.transform(X_dense)
         return self.model.predict(X_scaled)
 
@@ -536,7 +541,7 @@ class SVMBundleRecommender(BaseRecommender):
             logger.debug(f"{self.name}: Removed {num_filtered} unknown product(s) before prediction")
 
         X = self.mlb.transform(filtered_transactions)
-        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_dense = X.toarray() if hasattr(X, "toarray") else X  # type: ignore[union-attr]
         X_scaled = self.scaler.transform(X_dense)
         return self.model.predict_proba(X_scaled)
 
@@ -650,7 +655,7 @@ class BundleRecommendationEngine:
     def recommend_bundles(
         self,
         customer_transaction: List[str],
-        recommender_name: str = None,
+        recommender_name: Optional[str] = None,
         threshold: float = 0.5,
     ) -> Dict:
         """
@@ -836,7 +841,7 @@ class BundleRecommendationEngine:
         self,
         customer_transaction: List[str],
         top_n: int = 5,
-        recommender_name: str = None,
+        recommender_name: Optional[str] = None,
     ) -> List[Tuple[str, float]]:
         """
         Get cross-sell product recommendations.
