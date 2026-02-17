@@ -131,6 +131,195 @@ def load_cached_results(cache_file: str) -> Optional[dict]:
         return None
 ```
 
+### 1.5 Function Length and Complexity
+
+**Recommended Length Guidelines**
+- **20-50 lines**: Ideal range for most functions
+- **50-75 lines**: Consider refactoring if possible
+- **Over 100 lines**: Strong indicator the function needs splitting
+
+**Signs a Function Needs Splitting**
+```python
+# Red flags indicating refactoring needed:
+# 1. Multiple levels of nested loops/conditionals (>3 levels)
+# 2. Many local variables (>7-10)
+# 3. Multiple distinct responsibilities
+# 4. Hard to name accurately (name contains "and", "or", "then")
+# 5. Difficult to write a concise docstring
+# 6. Scrolling required to see the entire function
+```
+
+**Refactoring Techniques**
+
+**Extract Method Pattern**
+```python
+# Before - 80+ line function
+def process_order(order: dict) -> dict:
+    # 20 lines of validation
+    if not order.get("customer_id"):
+        raise ValueError("Missing customer_id")
+    # ... more validation
+    
+    # 25 lines of price calculation
+    total = 0
+    for item in order["items"]:
+        price = item["price"]
+        quantity = item["quantity"]
+        discount = calculate_discount(item)
+        # ... complex pricing logic
+    
+    # 20 lines of inventory check
+    for item in order["items"]:
+        # ... complex inventory logic
+    
+    # 15 lines of order creation
+    # ... database operations
+    
+    return result
+
+# After - Multiple focused functions
+def process_order(order: dict) -> dict:
+    """Process order with validation, pricing, and inventory checks."""
+    validate_order(order)
+    total = calculate_order_total(order)
+    check_inventory_availability(order["items"])
+    return create_order_record(order, total)
+
+def validate_order(order: dict) -> None:
+    """Validate order has required fields."""
+    if not order.get("customer_id"):
+        raise ValueError("Missing customer_id")
+    if not order.get("items"):
+        raise ValueError("Missing items")
+
+def calculate_order_total(order: dict) -> float:
+    """Calculate total price with discounts."""
+    total = 0
+    for item in order["items"]:
+        total += calculate_item_price(item)
+    return total
+```
+
+**Compose Functions Pattern**
+```python
+# Break complex logic into composable steps
+def prepare_dataset(data: pd.DataFrame) -> pd.DataFrame:
+    """Prepare dataset through transformation pipeline."""
+    return (
+        remove_duplicates(data)
+        .pipe(handle_missing_values)
+        .pipe(normalize_columns)
+        .pipe(encode_categorical)
+        .pipe(validate_schema)
+    )
+```
+
+**Use Helper Functions**
+```python
+# Extract complex conditionals
+def is_valid_transaction(txn: dict) -> bool:
+    """Check if transaction meets all validity criteria."""
+    return (
+        has_required_fields(txn) and
+        is_positive_amount(txn) and
+        is_within_date_range(txn) and
+        is_authorized_customer(txn)
+    )
+
+# Use in main logic
+def process_transactions(transactions: List[dict]) -> List[dict]:
+    return [txn for txn in transactions if is_valid_transaction(txn)]
+```
+
+**Acceptable Exceptions to Length Guidelines**
+
+**1. Well-Documented Complex Algorithms**
+```python
+def calculate_recommendation_score(
+    user_history: List[str],
+    candidate_items: List[str],
+    weights: dict
+) -> Dict[str, float]:
+    """
+    Calculate recommendation scores using collaborative filtering.
+    
+    Algorithm: Modified matrix factorization with temporal decay
+    Based on: [Research Paper Reference]
+    
+    Steps:
+    1. Build user-item matrix
+    2. Apply temporal decay weights
+    3. Compute similarity scores
+    4. Normalize and rank
+    """
+    # Step 1: Build user-item matrix (15 lines with comments)
+    # ...
+    
+    # Step 2: Apply temporal decay (12 lines with comments)
+    # ...
+    
+    # Step 3: Compute similarity (18 lines with comments)
+    # ...
+    
+    # Step 4: Normalize and rank (10 lines)
+    # ...
+    
+    return scores
+# Total: ~60 lines, but acceptable due to:
+# - Clear structure with commented sections
+# - Single cohesive algorithm
+# - Would be harder to understand if split
+```
+
+**2. Configuration/Setup Functions**
+```python
+def setup_application_config() -> Config:
+    """Initialize application configuration from multiple sources."""
+    # May be longer due to many configuration options
+    # but represents a single logical operation
+```
+
+**3. Switch/Case Style Logic**
+```python
+def handle_event(event_type: str, data: dict) -> Response:
+    """Route events to appropriate handlers."""
+    # Match/case or if/elif chains can be long
+    # but represent single routing responsibility
+    match event_type:
+        case "order_created": return handle_order_created(data)
+        case "order_updated": return handle_order_updated(data)
+        # ... 20+ event types
+```
+
+**Practical Refactoring Example**
+
+```python
+# Before: 120-line function doing too much
+def train_and_evaluate_models(data_path: str, config: dict):
+    # Data loading (15 lines)
+    # Data cleaning (25 lines)
+    # Feature engineering (30 lines)
+    # Model training loop (35 lines)
+    # Evaluation (15 lines)
+    pass
+
+# After: Clear separation of concerns
+def train_and_evaluate_models(data_path: str, config: dict):
+    """Main training pipeline orchestration."""
+    raw_data = load_data(data_path)
+    clean_data = clean_dataset(raw_data)
+    features = engineer_features(clean_data, config)
+    models = train_models(features, config)
+    return evaluate_models(models, features)
+```
+
+**Key Principles**
+- Each function should do one thing well
+- Functions should be at a single level of abstraction
+- Compose small functions into larger workflows
+- Name extraction functions clearly to show intent
+- Don't split just to hit a line count - maintain logical cohesion
+
 ---
 
 ## 2. Documentation Best Practices
