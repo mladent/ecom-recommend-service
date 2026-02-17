@@ -221,6 +221,94 @@ def _http_post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any], 
         raise RuntimeError(f"Network error: {exc}") from exc
 
 
+def _build_llm_config(
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    timeout_seconds: int,
+    api_key: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    deployment: Optional[str] = None,
+    api_version: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> LLMConfig:
+    """
+    Build LLMConfig from provider and credentials.
+    
+    Consolidates provider-specific credential mapping for all LLM functions.
+    Maps provider name and credentials to the correct LLMConfig fields based on provider type.
+    
+    Args:
+        provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
+        model: Model identifier
+        temperature: Generation temperature (0-2 range)
+        max_tokens: Max tokens for response
+        timeout_seconds: Request timeout in seconds
+        api_key: API key for the provider
+        endpoint: API endpoint URL (required for Azure)
+        deployment: Deployment name (required for Azure)
+        api_version: API version (required for Azure)
+        base_url: Base URL for API (OpenAI, Perplexity)
+    
+    Returns:
+        LLMConfig instance with provider-specific credentials assigned
+        
+    Raises:
+        ValueError: If provider is not supported
+    """
+    provider_lower = provider.lower()
+    if provider_lower not in {"openai", "azure", "gemini", "anthropic", "perplexity"}:
+        raise ValueError(
+            f"Unsupported provider: {provider}. "
+            f"Must be one of: openai, azure, gemini, anthropic, perplexity"
+        )
+    
+    return LLMConfig(
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        openai_api_key=api_key if provider_lower == "openai" else None,
+        azure_api_key=api_key if provider_lower == "azure" else None,
+        azure_endpoint=endpoint if provider_lower == "azure" else None,
+        azure_deployment=deployment if provider_lower == "azure" else None,
+        azure_api_version=api_version if provider_lower == "azure" else None,
+        gemini_api_key=api_key if provider_lower == "gemini" else None,
+        anthropic_api_key=api_key if provider_lower == "anthropic" else None,
+        perplexity_api_key=api_key if provider_lower == "perplexity" else None,
+        perplexity_base_url=base_url if provider_lower == "perplexity" else None,
+        openai_base_url=base_url if provider_lower == "openai" else None,
+    )
+
+
+def _handle_llm_quota_error(exc: Exception) -> bool:
+    """
+    Detect if exception indicates LLM quota exceeded or rate limited.
+    
+    Checks for common quota-related keywords and phrases across all LLM providers.
+    Used to distinguish quota errors (which should be propagated as LLMQuotaExceededError)
+    from other transient or permanent errors.
+    
+    Args:
+        exc: Exception to check
+        
+    Returns:
+        True if exception message indicates quota/rate limit exceeded, False otherwise
+    """
+    message = str(exc).lower()
+    quota_keywords = {
+        "insufficient_quota",
+        "quota",
+        "rate_limit",
+        "too_many_requests",
+        "429",
+        "exceeded",
+    }
+    return any(keyword in message for keyword in quota_keywords)
+
+
 def normalize_description_with_llm(
     text: Optional[str],
     provider: str,
@@ -235,7 +323,9 @@ def normalize_description_with_llm(
     base_url: Optional[str] = None,
 ) -> str:
     """
-    Normalize a product description with an LLM provider. Falls back to input on failure.
+    Normalize a product description with an LLM provider.
+    
+    Falls back to original text on failure or when LLM is unavailable.
     
     Args:
         text: Product description to normalize
@@ -256,39 +346,20 @@ def normalize_description_with_llm(
     if not text:
         return ""
 
-    # Build prompts
-    prompt = _render_prompt("normalize_description_user.md", text=text)
-    system_prompt = _load_prompt_template("normalize_description_system.md")
-
     try:
-        # Create LLM configuration
-        config = LLMConfig(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
-            openai_api_key=api_key if provider.lower() == "openai" else None,
-            azure_api_key=api_key if provider.lower() == "azure" else None,
-            azure_endpoint=endpoint,
-            azure_deployment=deployment,
-            azure_api_version=api_version,
-            gemini_api_key=api_key if provider.lower() == "gemini" else None,
-            anthropic_api_key=api_key if provider.lower() == "anthropic" else None,
-            perplexity_api_key=api_key if provider.lower() == "perplexity" else None,
-            perplexity_base_url=base_url if provider.lower() == "perplexity" else None,
-            openai_base_url=base_url if provider.lower() == "openai" else None,
-        )
+        system_prompt = _load_prompt_template("normalize_description_system.md")
+        prompt = _render_prompt("normalize_description_user.md", text=text)
         
-        # Make LLM call
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
         client = LLMClient(config)
-        result = client.chat_completion(system_prompt=system_prompt, user_prompt=prompt)
-        return result.strip()
+        return client.chat_completion(system_prompt=system_prompt, user_prompt=prompt).strip()
         
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM normalization failed ({provider}): {exc}")
         return text
 
@@ -330,49 +401,24 @@ def enrich_categories_with_llm(
     if not text:
         return {field: "NaN" for field in fields}
 
-    # Build prompt requesting JSON output
-    fields_str = ", ".join(fields)
-    prompt = _render_prompt("enrich_categories_user.md", fields=fields_str, text=text)
-    system_prompt = _load_prompt_template("enrich_categories_system.md")
-
     try:
-        # Create LLM configuration
-        config = LLMConfig(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
-            openai_api_key=api_key if provider.lower() == "openai" else None,
-            azure_api_key=api_key if provider.lower() == "azure" else None,
-            azure_endpoint=endpoint,
-            azure_deployment=deployment,
-            azure_api_version=api_version,
-            gemini_api_key=api_key if provider.lower() == "gemini" else None,
-            anthropic_api_key=api_key if provider.lower() == "anthropic" else None,
-            perplexity_api_key=api_key if provider.lower() == "perplexity" else None,
-            perplexity_base_url=base_url if provider.lower() == "perplexity" else None,
-            openai_base_url=base_url if provider.lower() == "openai" else None,
-        )
+        system_prompt = _load_prompt_template("enrich_categories_system.md")
+        fields_str = ", ".join(fields)
+        prompt = _render_prompt("enrich_categories_user.md", fields=fields_str, text=text)
         
-        # Make LLM call and parse JSON response
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
         client = LLMClient(config)
         result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
         
-        # Validate schema
         _validate_json_schema(result, "llm_enrich_categories.json", "category enrichment")
+        return {field: result.get(field, "NaN") for field in fields}
         
-        # Ensure all requested fields are present
-        enriched = {}
-        for field in fields:
-            enriched[field] = result.get(field, "NaN")
-        
-        return enriched
-
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM category enrichment failed ({provider}): {exc}")
         return {field: "NaN" for field in fields}
 
@@ -517,55 +563,35 @@ def batch_score_anomalies_with_llm(
     if not records:
         return {}
 
-    prompt = _render_prompt(
-        "batch_score_anomalies_user.md",
-        records_json=json.dumps(records, ensure_ascii=False),
-    )
-    system_prompt = _load_prompt_template("batch_score_anomalies_system.md")
-
     try:
-        # Create LLM configuration
-        config = LLMConfig(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
-            openai_api_key=api_key if provider.lower() == "openai" else None,
-            azure_api_key=api_key if provider.lower() == "azure" else None,
-            azure_endpoint=endpoint,
-            azure_deployment=deployment,
-            azure_api_version=api_version,
-            gemini_api_key=api_key if provider.lower() == "gemini" else None,
-            anthropic_api_key=api_key if provider.lower() == "anthropic" else None,
-            perplexity_api_key=api_key if provider.lower() == "perplexity" else None,
-            perplexity_base_url=base_url if provider.lower() == "perplexity" else None,
-            openai_base_url=base_url if provider.lower() == "openai" else None,
+        system_prompt = _load_prompt_template("batch_score_anomalies_system.md")
+        prompt = _render_prompt(
+            "batch_score_anomalies_user.md",
+            records_json=json.dumps(records, ensure_ascii=False),
         )
         
-        # Make LLM call and parse JSON response
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
         client = LLMClient(config)
         parsed: List[Dict[str, Any]] = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)  # type: ignore[assignment]
         
-        # Validate schema
         _validate_json_schema(parsed, "llm_batch_score_anomalies.json", "anomaly scoring")
         
-        # Build result dictionary
         result: Dict[str, Dict[str, str]] = {}
         for item in parsed:
             key = str(item.get("key", ""))
-            if not key:
-                continue
-            result[key] = {
-                "anomaly_type": str(item.get("anomaly_type", "none")),
-                "anomaly_reason": str(item.get("anomaly_reason", "")),
-            }
+            if key:
+                result[key] = {
+                    "anomaly_type": str(item.get("anomaly_type", "none")),
+                    "anomaly_reason": str(item.get("anomaly_reason", "")),
+                }
         return result
-
+        
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM anomaly scoring failed ({provider}): {exc}")
         return {}
 
@@ -607,48 +633,25 @@ def extract_contexts_with_llm(
     if not text:
         return {"contexts": []}
 
-    # Build prompt requesting JSON output
-    prompt = _render_prompt("extract_contexts_user.md", max_contexts=max_contexts, text=text)
-    system_prompt = _load_prompt_template("extract_contexts_system.md")
-
     try:
-        # Create LLM configuration
-        config = LLMConfig(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
-            openai_api_key=api_key if provider.lower() == "openai" else None,
-            azure_api_key=api_key if provider.lower() == "azure" else None,
-            azure_endpoint=endpoint,
-            azure_deployment=deployment,
-            azure_api_version=api_version,
-            gemini_api_key=api_key if provider.lower() == "gemini" else None,
-            anthropic_api_key=api_key if provider.lower() == "anthropic" else None,
-            perplexity_api_key=api_key if provider.lower() == "perplexity" else None,
-            perplexity_base_url=base_url if provider.lower() == "perplexity" else None,
-            openai_base_url=base_url if provider.lower() == "openai" else None,
-        )
+        system_prompt = _load_prompt_template("extract_contexts_system.md")
+        prompt = _render_prompt("extract_contexts_user.md", max_contexts=max_contexts, text=text)
         
-        # Make LLM call and parse JSON response
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
         client = LLMClient(config)
         result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
         
-        # Validate schema
         _validate_json_schema(result, "llm_extract_contexts.json", "context extraction")
         
-        # Ensure result has contexts array
         contexts = result.get("contexts", [])
-        if not isinstance(contexts, list):
-            contexts = []
+        return {"contexts": contexts if isinstance(contexts, list) else []}
         
-        return {"contexts": contexts}
-
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM context extraction failed ({provider}): {exc}")
         return {"contexts": []}
 
@@ -740,34 +743,18 @@ def select_alternatives_with_llm(
     if not missing_item or not candidates:
         return []
 
-    prompt = _render_prompt(
-        "select_alternatives_user.md",
-        missing_item=missing_item,
-        candidates_json=json.dumps(candidates[:200]),
-    )
-    system_prompt = _load_prompt_template("select_alternatives_system.md")
-
     try:
-        # Create LLM configuration
-        config = LLMConfig(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
-            openai_api_key=api_key if provider.lower() == "openai" else None,
-            azure_api_key=api_key if provider.lower() == "azure" else None,
-            azure_endpoint=endpoint,
-            azure_deployment=deployment,
-            azure_api_version=api_version,
-            gemini_api_key=api_key if provider.lower() == "gemini" else None,
-            anthropic_api_key=api_key if provider.lower() == "anthropic" else None,
-            perplexity_api_key=api_key if provider.lower() == "perplexity" else None,
-            perplexity_base_url=base_url if provider.lower() == "perplexity" else None,
-            openai_base_url=base_url if provider.lower() == "openai" else None,
+        system_prompt = _load_prompt_template("select_alternatives_system.md")
+        prompt = _render_prompt(
+            "select_alternatives_user.md",
+            missing_item=missing_item,
+            candidates_json=json.dumps(candidates[:200]),
         )
         
-        # Make LLM call and parse JSON response
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
         client = LLMClient(config)
         result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
         
@@ -775,19 +762,14 @@ def select_alternatives_with_llm(
         if isinstance(result, list):
             result = {"alternatives": result}
         
-        # Validate schema
         _validate_json_schema(result, "llm_select_alternatives.json", "alternative selection")
         
-        # Extract alternatives
         alternatives: List[Dict[str, Any]] = result.get("alternatives", [])
-        if not isinstance(alternatives, list):
-            return []
-        return alternatives[:max_alternatives]  # type: ignore[return-value]
-
+        return alternatives[:max_alternatives] if isinstance(alternatives, list) else []
+        
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM alternative selection failed ({provider}): {exc}")
         return []
 
