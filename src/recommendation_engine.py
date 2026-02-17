@@ -48,6 +48,7 @@ from src.config import (
     PERPLEXITY_API_KEY,
     PERPLEXITY_BASE_URL,
 )
+from src.llm_client import LLMConfig, LLMClient
 from src.data_splitter import RandomSplit, KFoldSplit, BundleDataPreprocessor
 from src.utils import (
     load_inventory_csv,
@@ -720,18 +721,26 @@ class BundleRecommendationEngine:
             cache_updated = False
 
             provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-            llm_available = True
-
-            if provider == "openai" and not OPENAI_API_KEY:
-                llm_available = False
-            elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-                llm_available = False
-            elif provider == "gemini" and not GEMINI_API_KEY:
-                llm_available = False
-            elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-                llm_available = False
-            elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-                llm_available = False
+            
+            # Validate LLM credentials using unified client
+            config = LLMConfig(
+                provider=provider,
+                model=LLM_MODEL,
+                temperature=LLM_TEMPERATURE,
+                max_tokens=LLM_MAX_TOKENS,
+                timeout_seconds=LLM_TIMEOUT_SECONDS,
+                openai_api_key=OPENAI_API_KEY,
+                azure_api_key=AZURE_OPENAI_API_KEY,
+                azure_endpoint=AZURE_OPENAI_ENDPOINT,
+                azure_deployment=AZURE_OPENAI_DEPLOYMENT,
+                azure_api_version=AZURE_OPENAI_API_VERSION,
+                gemini_api_key=GEMINI_API_KEY,
+                anthropic_api_key=ANTHROPIC_API_KEY,
+                perplexity_api_key=PERPLEXITY_API_KEY,
+                perplexity_base_url=PERPLEXITY_BASE_URL,
+            )
+            client = LLMClient(config)
+            llm_available = client.validate_credentials()
 
             candidate_hash = hashlib.sha256("|".join(sorted(candidates)).encode("utf-8")).hexdigest()
             resolved_bundles = []
