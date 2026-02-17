@@ -185,6 +185,11 @@ def main():
     transaction_items = [list(items) for items in transactions["Items"].values]
     bundle_list = [tuple(b) for b in bundles]
 
+    if not bundle_list:
+        logger.error(f"No bundles found. With quick mode sampling ({len(transaction_items)} transactions), " +
+                     "there may not be enough co-occurrence patterns. Try running without --quick flag.")
+        return
+
     logger.info(f"Loaded {len(transaction_items)} transactions and {len(bundle_list)} bundles")
 
     # ========================================================================
