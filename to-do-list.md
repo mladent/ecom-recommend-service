@@ -162,16 +162,26 @@
       - Helper methods utilized: 4 out of 5 (all except would be _extract_contexts in next step)
       - Code structure: More maintainable, easier to test, follows DRY principle
   
-  - **Step 3: Refactor _flag_anomalies() Method** 🎯
-    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [505-693](src/data_pipeline.py#L505-L693) (189 lines)
-    - **Changes:**
-      1. Replace lines 542-560 LLMConfig creation: `config = self._build_pipeline_llm_config()`
-      2. Replace lines 626-633 provider key ternary: `api_key=self._get_api_key_for_provider(provider),`
-      3. Replace line 638 Perplexity check: `base_url=self._get_base_url_for_provider(provider),`
-      4. Standardize error handling with: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="use_heuristic")`
-      5. Cache helper: `cache = self._validate_and_load_cache(ANOMALY_CACHE_PATH, OUTLIER_ENABLED, self.force_reprocess)`
-    - **Note:** Keep `llm_available` flag logic—it's used for fallback activation
-    - **Result:** 189 lines → 162 lines (~14% reduction)
+  - **Step 3: Refactor _flag_anomalies() Method** ✅ COMPLETE
+    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [579-740](src/data_pipeline.py#L579-L740) (162 lines)
+    - **Changes Applied:**
+      1. ✅ Replaced LLMConfig creation with: `config = self._build_pipeline_llm_config()`
+      2. ✅ Replaced api_key ternary with: `api_key=self._get_api_key_for_provider(provider),`
+      3. ✅ Replaced base_url check with: `base_url=self._get_base_url_for_provider(provider),`
+      4. ✅ Standardized error handling with: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="use_heuristic")`
+      5. ✅ Replaced cache loading with helper: `cache = self._validate_and_load_cache(ANOMALY_CACHE_PATH, OUTLIER_ENABLED, self.force_reprocess)`
+    - **Result:** 189 lines → 162 lines ✅ **14.3% reduction** (exactly as projected!)
+    - **Verification Results:**
+      - ✅ `test_flag_anomalies_iqr_detection` PASSED
+      - ✅ All 4 LLM feature tests PASSED (100%)
+      - ✅ No syntax or import errors
+      - ✅ All 5 helper methods properly integrated
+      - ✅ Fallback logic preserved (`llm_available` flag still used for heuristics)
+    - **File-level Impact:**
+      - Total file size: 1,161 lines → 1,133 lines (-28 lines, -2.4% reduction)
+      - Cumulative reduction: Original 1,192 → Current 1,133 (-59 lines, -4.9%)
+      - Helper methods utilized: All 5 out of 5
+      - Code structure: More maintainable; error handling standardized
   
   - **Step 4: Refactor _extract_contexts() Method** 🎯
     - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [695-825](src/data_pipeline.py#L695-L825) (131 lines)
