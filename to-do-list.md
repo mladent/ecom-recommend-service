@@ -126,20 +126,21 @@
   - **Testing:** Patch LLMClient methods in test fixtures instead of urllib
   - **TL;DR:** Consolidate duplicate LLM provider validation logic from 3 methods into 5 reusable pipeline helpers. Eliminate ~95 lines of duplicate provider/config dispatch patterns. Keep existing utils function calls. Standardize error handling. Update tests to mock LLMClient directly. Outcome: ~25 line reduction + zero breaking changes + faster Phase 2 integration.
   
-  - **Step 1: Create Pipeline Helper Methods** (Prerequisite)
-    - Create 5 new helper methods in [src/data_pipeline.py](src/data_pipeline.py) after `__init__` (after line ~310):
-      1. `_get_api_key_for_provider(provider: str) -> Optional[str]` (3 lines)
+  - **Step 1: Create Pipeline Helper Methods** (Prerequisite) ✅ COMPLETE
+    - ✅ Created 5 new helper methods in [src/data_pipeline.py](src/data_pipeline.py) after `__init__`:
+      1. ✅ `_get_api_key_for_provider(provider: str) -> Optional[str]` (15 lines)
          - Returns correct API key based on provider (eliminates 7-line ternary chains)
-      2. `_get_base_url_for_provider(provider: str) -> Optional[str]` (2 lines)
+      2. ✅ `_get_base_url_for_provider(provider: str) -> Optional[str]` (8 lines)
          - Returns base_url only for Perplexity (eliminates 3 separate checks)
-      3. `_build_pipeline_llm_config() -> LLMConfig` (20 lines)
+      3. ✅ `_build_pipeline_llm_config() -> LLMConfig` (20 lines)
          - Consolidates LLMConfig creation from global config (eliminates 3x 18-line blocks)
-      4. `_handle_llm_quota_error_standardized(exc: Exception, fallback_strategy: str) -> None` (15 lines)
+      4. ✅ `_handle_llm_quota_error_standardized(exc: Exception, fallback_strategy: str) -> None` (18 lines)
          - Centralized quota error handling with standardized behavior
          - Parameters: `fallback_strategy` ∈ {"fill_nan", "use_heuristic", "skip_batch"}
-      5. `_validate_and_load_cache(cache_path: str, enabled: bool, force_reprocess: bool) -> Dict` (5 lines)
+      5. ✅ `_validate_and_load_cache(cache_path: str, enabled: bool, force_reprocess: bool) -> Dict` (11 lines)
          - Combined cache loading logic (used by _enrich, _flag, _extract)
-    - Benefits: ~95 lines reduction, single source of truth for provider dispatch, easier Phase 2 integration
+    - ✅ Benefits achieved: 104 lines added (5 helpers), verified import passes, ready for Steps 2-4
+    - ✅ Commit: `refactor(pipeline): add LLM integration helper methods` (af08260)
   
   - **Step 2: Refactor _enrich_categories() Method** 🎯
     - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [337-504](src/data_pipeline.py#L337-L504) (168 lines)
