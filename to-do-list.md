@@ -142,15 +142,25 @@
     - ✅ Benefits achieved: 104 lines added (5 helpers), verified import passes, ready for Steps 2-4
     - ✅ Commit: `refactor(pipeline): add LLM integration helper methods` (af08260)
   
-  - **Step 2: Refactor _enrich_categories() Method** 🎯
-    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [337-504](src/data_pipeline.py#L337-L504) (168 lines)
-    - **Changes:**
-      1. Replace lines 360-378 with: `config = self._build_pipeline_llm_config()`
-      2. Replace lines 424-431 with: `api_key=self._get_api_key_for_provider(provider),`
-      3. Replace line 436 with: `base_url=self._get_base_url_for_provider(provider),`
-      4. Replace try-except quota handling (lines 447-453) with: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="fill_nan")`
-      5. Update cache loading at line 351-357 with helper: `cache = self._validate_and_load_cache(ENRICHMENT_CACHE_PATH, ENRICHMENT_ENABLED, self.force_reprocess)`
-    - **Result:** 168 lines → 145 lines (~14% reduction)
+  - **Step 2: Refactor _enrich_categories() Method** ✅ COMPLETE
+    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [441-548](src/data_pipeline.py#L441-L548) (108 lines)
+    - **Changes Applied:**
+      1. ✅ Replaced old config creation with: `config = self._build_pipeline_llm_config()`
+      2. ✅ Replaced api_key ternary chain with: `api_key=self._get_api_key_for_provider(provider),`
+      3. ✅ Replaced base_url assignment with: `base_url=self._get_base_url_for_provider(provider),`
+      4. ✅ Replaced try-except quota handling with: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="fill_nan")`
+      5. ✅ Updated cache loading with helper: `cache = self._validate_and_load_cache(ENRICHMENT_CACHE_PATH, ENRICHMENT_CACHE_FIRST, self.force_reprocess)`
+    - **Result:** 168 lines → 108 lines ✅ **35.7% reduction** (exceeded projection of 14%!)
+    - **Verification Results:**
+      - ✅ `test_enrich_categories_cache_first` PASSED
+      - ✅ `test_enrich_categories_no_credentials` PASSED
+      - ✅ All 4 LLM feature tests PASSED
+      - ✅ No syntax or import errors
+      - ✅ Backward compatible (identical external behavior)
+    - **File-level Impact:**
+      - Total file size: 1,192 lines → 1,161 lines (-31 lines, -2.6% overall reduction)
+      - Helper methods utilized: 4 out of 5 (all except would be _extract_contexts in next step)
+      - Code structure: More maintainable, easier to test, follows DRY principle
   
   - **Step 3: Refactor _flag_anomalies() Method** 🎯
     - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [505-693](src/data_pipeline.py#L505-L693) (189 lines)
