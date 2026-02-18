@@ -89,6 +89,110 @@ class DataPipeline:
         self.bundles = None
         self.force_reprocess = force_reprocess
 
+    def _get_api_key_for_provider(self, provider: str) -> Optional[str]:
+        """Get the correct API key for the specified LLM provider.
+        
+        Args:
+            provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
+        
+        Returns:
+            Optional[str]: API key for the provider, or None if not configured
+        """
+        provider_lower = provider.lower()
+        if provider_lower == "openai":
+            return OPENAI_API_KEY
+        elif provider_lower == "azure":
+            return AZURE_OPENAI_API_KEY
+        elif provider_lower == "gemini":
+            return GEMINI_API_KEY
+        elif provider_lower == "anthropic":
+            return ANTHROPIC_API_KEY
+        elif provider_lower == "perplexity":
+            return PERPLEXITY_API_KEY
+        return None
+
+    def _get_base_url_for_provider(self, provider: str) -> Optional[str]:
+        """Get the base URL for the specified LLM provider (if applicable).
+        
+        Args:
+            provider: LLM provider name
+        
+        Returns:
+            Optional[str]: Base URL for the provider, or None if not applicable
+        """
+        if provider.lower() == "perplexity":
+            return PERPLEXITY_BASE_URL
+        return None
+
+    def _build_pipeline_llm_config(self) -> LLMConfig:
+        """Build LLMConfig from global configuration settings.
+        
+        Centralizes provider-specific credential mapping for all LLM functions
+        in the data pipeline, eliminating duplicate config creation across methods.
+        
+        Returns:
+            LLMConfig: Configured LLM client configuration object
+        """
+        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        return LLMConfig(
+            provider=LLM_PROVIDER,
+            model=LLM_MODEL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+            timeout_seconds=LLM_TIMEOUT_SECONDS,
+            openai_api_key=OPENAI_API_KEY if provider == "openai" else None,
+            azure_api_key=AZURE_OPENAI_API_KEY if provider == "azure" else None,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT if provider == "azure" else None,
+            azure_deployment=AZURE_OPENAI_DEPLOYMENT if provider == "azure" else None,
+            azure_api_version=AZURE_OPENAI_API_VERSION if provider == "azure" else None,
+            gemini_api_key=GEMINI_API_KEY if provider == "gemini" else None,
+            anthropic_api_key=ANTHROPIC_API_KEY if provider == "anthropic" else None,
+            perplexity_api_key=PERPLEXITY_API_KEY if provider == "perplexity" else None,
+            perplexity_base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+        )
+
+    def _handle_llm_quota_error_standardized(self, exc: Exception, fallback_strategy: str) -> None:
+        """Handle LLM quota exceeded errors with standardized behavior.
+        
+        Centralizes error handling for quota/rate limit errors, providing
+        consistent logging and fallback strategy tracking across all LLM methods.
+        
+        Args:
+            exc: The exception that occurred
+            fallback_strategy: Strategy name to use ('fill_nan', 'use_heuristic', 'skip_batch')
+        
+        Raises:
+            LLMQuotaExceededError: Re-raises the quota error for caller to handle
+        """
+        logger.warning(
+            f"LLM quota exceeded or rate limited: {exc}. "
+            f"Using fallback strategy: {fallback_strategy}"
+        )
+        # Re-raise to let calling method implement strategy-specific handling
+        raise LLMQuotaExceededError(str(exc)) from exc
+
+    def _validate_and_load_cache(self, cache_path: str, enabled: bool, force_reprocess: bool) -> Dict[str, Any]:
+        """Load and validate cache with unified logic for all pipeline methods.
+        
+        Consolidates cache loading validation logic used by _enrich_categories,
+        _flag_anomalies, and _extract_contexts methods.
+        
+        Args:
+            cache_path: Path to the cache JSON file
+            enabled: Whether caching is enabled for this operation
+            force_reprocess: Whether to bypass cache and reprocess from scratch
+        
+        Returns:
+            Dict[str, Any]: Loaded cache dictionary, empty dict if cache disabled or not found
+        """
+        if not enabled or force_reprocess:
+            return {}
+        
+        cache = load_json_file(cache_path)
+        if cache:
+            logger.info(f"Loaded cache from: {cache_path} ({len(cache)} entries)")
+        return cache
+
     def download_kaggle_data(self) -> bool:
         """
         Download e-commerce dataset from Kaggle.
