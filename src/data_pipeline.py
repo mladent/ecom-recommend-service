@@ -755,9 +755,11 @@ class DataPipeline:
             logger.info("Context extraction disabled; skipping")
             return df
 
-        cache = load_json_file(CONTEXT_CACHE_PATH) if (CONTEXT_CACHE_FIRST and not self.force_reprocess) else {}
-        if CONTEXT_CACHE_FIRST and not self.force_reprocess and cache:
-            logger.info(f"Loaded context cache from: {CONTEXT_CACHE_PATH} ({len(cache)} entries)")
+        cache = self._validate_and_load_cache(
+            CONTEXT_CACHE_PATH,
+            CONTEXT_CACHE_FIRST,
+            self.force_reprocess,
+        )
         cache_updated = False
         cache_hits = 0
         cache_misses = 0
@@ -765,22 +767,7 @@ class DataPipeline:
         provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
         
         # Validate LLM credentials using unified client
-        config = LLMConfig(
-            provider=provider,
-            model=LLM_MODEL,
-            temperature=LLM_TEMPERATURE,
-            max_tokens=LLM_MAX_TOKENS,
-            timeout_seconds=LLM_TIMEOUT_SECONDS,
-            openai_api_key=OPENAI_API_KEY,
-            azure_api_key=AZURE_OPENAI_API_KEY,
-            azure_endpoint=AZURE_OPENAI_ENDPOINT,
-            azure_deployment=AZURE_OPENAI_DEPLOYMENT,
-            azure_api_version=AZURE_OPENAI_API_VERSION,
-            gemini_api_key=GEMINI_API_KEY,
-            anthropic_api_key=ANTHROPIC_API_KEY,
-            perplexity_api_key=PERPLEXITY_API_KEY,
-            perplexity_base_url=PERPLEXITY_BASE_URL,
-        )
+        config = self._build_pipeline_llm_config()
         client = LLMClient(config)
         llm_available = client.validate_credentials()
 
@@ -814,29 +801,19 @@ class DataPipeline:
                         temperature=LLM_TEMPERATURE,
                         max_tokens=LLM_MAX_TOKENS,
                         timeout_seconds=LLM_TIMEOUT_SECONDS,
-                        api_key=(
-                            OPENAI_API_KEY
-                            if provider == "openai"
-                            else AZURE_OPENAI_API_KEY
-                            if provider == "azure"
-                            else GEMINI_API_KEY
-                            if provider == "gemini"
-                            else ANTHROPIC_API_KEY
-                            if provider == "anthropic"
-                            else PERPLEXITY_API_KEY
-                        ),
+                        api_key=self._get_api_key_for_provider(provider),
                         endpoint=AZURE_OPENAI_ENDPOINT,
                         deployment=AZURE_OPENAI_DEPLOYMENT,
                         api_version=AZURE_OPENAI_API_VERSION,
-                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                        base_url=self._get_base_url_for_provider(provider),
                     )
                     cache_misses += 1
                 except LLMQuotaExceededError as exc:
                     llm_available = False
-                    logger.warning(
-                        "LLM quota exceeded; skipping remaining context extraction calls for this run"
+                    self._handle_llm_quota_error_standardized(
+                        exc,
+                        fallback_strategy="skip_batch",
                     )
-                    logger.debug(f"Quota error detail: {exc}")
                     result = {"contexts": []}
             else:
                 result = {"contexts": []}

@@ -183,15 +183,22 @@
       - Helper methods utilized: All 5 out of 5
       - Code structure: More maintainable; error handling standardized
   
-  - **Step 4: Refactor _extract_contexts() Method** 🎯
-    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [695-825](src/data_pipeline.py#L695-L825) (131 lines)
-    - **Changes:**
-      1. Replace lines 720-738 LLMConfig: `config = self._build_pipeline_llm_config()`
-      2. Replace lines 773-780 provider key ternary: `api_key=self._get_api_key_for_provider(provider),`
-      3. Replace line 782 base_url: `base_url=self._get_base_url_for_provider(provider),`
-      4. Standardize error handling: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="skip_batch")`
-      5. Cache helper: `cache = self._validate_and_load_cache(CONTEXT_CACHE_PATH, CONTEXT_ENABLED, self.force_reprocess)`
-    - **Result:** 131 lines → 110 lines (~16% reduction)
+  - **Step 4: Refactor _extract_contexts() Method** ✅ COMPLETE
+    - **File:** [src/data_pipeline.py](src/data_pipeline.py), lines [741-847](src/data_pipeline.py#L741-L847)
+    - **Changes Applied:**
+      1. ✅ Replaced LLMConfig creation with: `config = self._build_pipeline_llm_config()`
+      2. ✅ Replaced api_key ternary with: `api_key=self._get_api_key_for_provider(provider),`
+      3. ✅ Replaced base_url check with: `base_url=self._get_base_url_for_provider(provider),`
+      4. ✅ Standardized error handling with: `except LLMQuotaExceededError as exc: self._handle_llm_quota_error_standardized(exc, fallback_strategy="skip_batch")`
+      5. ✅ Replaced cache loading with helper: `cache = self._validate_and_load_cache(CONTEXT_CACHE_PATH, CONTEXT_CACHE_FIRST, self.force_reprocess)`
+    - **Result:** 131 lines → 106 lines ✅ **19.1% reduction** (exceeds projection)
+    - **Verification Results:**
+      - ✅ `test_extract_contexts_mocked` PASSED
+      - ✅ No syntax or import errors
+      - ✅ All 5 helper methods integrated
+    - **File-level Impact:**
+      - Total file size: 1,133 lines → 1,110 lines (-23 lines, -2.0% reduction)
+      - Cumulative reduction: Original 1,192 → Current 1,110 (-82 lines, -6.9%)
   
   - **Step 5: Update Test Fixtures & Mocking** ✅
     - **File:** [tests/test_data_pipeline.py](tests/test_data_pipeline.py)
