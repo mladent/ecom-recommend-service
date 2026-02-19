@@ -12,6 +12,9 @@ from itertools import combinations
 from collections import Counter
 
 from src.config import (
+    PipelineConfig,
+    load_config,
+    # Keep legacy globals for backward compatibility during Phase 2 transition
     RAW_DATA_PATH,
     PROCESSED_DATA_PATH,
     MIN_SUPPORT,
@@ -19,10 +22,23 @@ from src.config import (
     MAX_BUNDLE_SIZE,
     RANDOM_STATE,
     NORMALIZATION_ENABLED,
-    NORMALIZATION_CACHE_FIRST,
-    NORMALIZATION_CACHE_PATH,
-    NORMALIZATION_ALIAS_MAP_PATH,
-    NORMALIZATION_MIN_LENGTH,
+    ENRICHMENT_ENABLED,
+    ENRICHMENT_BATCH_SIZE,
+    ENRICHMENT_FIELDS,
+    ENRICHMENT_CACHE_FIRST,
+    ENRICHMENT_CACHE_PATH,
+    OUTLIER_ENABLED,
+    OUTLIER_CACHE_FIRST,
+    OUTLIER_CACHE_PATH,
+    OUTLIER_OUTPUT_PATH,
+    OUTLIER_BATCH_SIZE,
+    OUTLIER_IQR_MULTIPLIER,
+    OUTLIER_FIELDS,
+    CONTEXT_ENABLED,
+    CONTEXT_CACHE_FIRST,
+    CONTEXT_CACHE_PATH,
+    CONTEXT_MAX_CONTEXTS,
+    CONTEXT_MIN_CONFIDENCE,
     LLM_PROVIDER,
     LLM_MODEL,
     LLM_TEMPERATURE,
@@ -37,23 +53,6 @@ from src.config import (
     ANTHROPIC_API_KEY,
     PERPLEXITY_API_KEY,
     PERPLEXITY_BASE_URL,
-    ENRICHMENT_ENABLED,
-    ENRICHMENT_CACHE_FIRST,
-    ENRICHMENT_CACHE_PATH,
-    ENRICHMENT_BATCH_SIZE,
-    ENRICHMENT_FIELDS,
-    OUTLIER_ENABLED,
-    OUTLIER_CACHE_FIRST,
-    OUTLIER_CACHE_PATH,
-    OUTLIER_OUTPUT_PATH,
-    OUTLIER_BATCH_SIZE,
-    OUTLIER_IQR_MULTIPLIER,
-    OUTLIER_FIELDS,
-    CONTEXT_ENABLED,
-    CONTEXT_CACHE_FIRST,
-    CONTEXT_CACHE_PATH,
-    CONTEXT_MAX_CONTEXTS,
-    CONTEXT_MIN_CONFIDENCE,
 )
 from src.llm_client import LLMConfig, LLMClient
 from src.utils import (
@@ -76,11 +75,12 @@ logger = logging.getLogger(__name__)
 class DataPipeline:
     """Pipeline for loading, cleaning, and preprocessing e-commerce data."""
 
-    def __init__(self, force_reprocess: bool = False):
+    def __init__(self, force_reprocess: bool = False, config: Optional[PipelineConfig] = None):
         """Initialize the data pipeline.
         
         Args:
             force_reprocess: If True, bypass all LLM caches and reprocess from scratch
+            config: Optional PipelineConfig object. If None, loads config from environment via load_config()
         """
         self.raw_data = None
         self.processed_data = None
@@ -88,6 +88,13 @@ class DataPipeline:
         self.transactions = None
         self.bundles = None
         self.force_reprocess = force_reprocess
+        
+        # Load configuration
+        if config is None:
+            pipeline_config, _, _, _, _ = load_config()
+            self.config = pipeline_config
+        else:
+            self.config = config
 
     def _get_api_key_for_provider(self, provider: str) -> Optional[str]:
         """Get the correct API key for the specified LLM provider.
