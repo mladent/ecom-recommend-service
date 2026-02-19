@@ -364,16 +364,24 @@
     - ✅ Added optional config injection in constructor: `DataPipeline.__init__(..., config: Optional[PipelineConfig] = None)`
     - ✅ Added default config loading path via `load_config()` when config is not provided (backward compatibility preserved)
     - ✅ Commit pushed: `d12636e` (`refactor: inject pipeline config`)
-    - ⏳ Remaining: migrate method bodies from global constants to `self.config.*` and remove legacy global imports
+    - ✅ Migrated path-dependent methods to config defaults (`download_kaggle_data`, `load_raw_data`, `convert_csv_to_tsv`, `save_processed_data`, `load_processed_data`)
+    - ✅ Migrated bundle parameter defaults to config (`generate_product_bundles` now defaults to `self.config.min_support`, `self.config.min_confidence`, `self.config.max_bundle_size`)
+    - ✅ Replaced processed output directory usage in cleanup steps (`_handle_cancellations`, `_remove_missing_customers`, `_clean_data`) with `self.config.processed_data_path`
+    - ✅ Replaced LLM globals in pipeline helper + LLM flow methods with `self.config.llm_config` (`_get_api_key_for_provider`, `_get_base_url_for_provider`, `_build_pipeline_llm_config`, `_enrich_categories`, `_flag_anomalies`, `_extract_contexts`)
+    - ✅ Replaced cache globals in core LLM flow methods with `self.config.cache_config` (enrichment, outlier, context cache paths/flags)
+    - ✅ Replaced feature-flag globals with injected config flags (`enrichment_enabled`, `outlier_enabled`, `context_enabled`, `normalization_enabled`)
+    - ✅ Removed now-unused imports from [src/data_pipeline.py](src/data_pipeline.py) via automatic unused-import cleanup
+    - ✅ Validation snapshot: targeted tests passed (9/9) covering bundle precondition, path defaults, save/load, enrichment, outlier, and context extraction
+    - ⏳ Remaining: migrate remaining non-config constants (batch sizes, field lists, outlier/context thresholds, output paths) into `PipelineConfig`/`CacheConfig` and finish legacy import cleanup
   - **Tasks:**
-    - Add `__init__(self, config: PipelineConfig)` to DataPipeline
-    - Replace all `RAW_DATA_PATH` → `self.config.raw_data_path`
-    - Replace all `PROCESSED_DATA_PATH` → `self.config.processed_data_path`
-    - Replace all `MIN_SUPPORT` → `self.config.min_support`
-    - Replace all `MIN_CONFIDENCE` → `self.config.min_confidence`
-    - Replace LLM config globals with `self.config.llm_config`
-    - Replace cache config globals with `self.config.cache_config`
-    - Update all method signatures to use injected config
+    - ✅ Add `__init__(self, config: PipelineConfig)` to DataPipeline
+    - ✅ Replace all `RAW_DATA_PATH` → `self.config.raw_data_path` (method defaults and download path)
+    - ✅ Replace all `PROCESSED_DATA_PATH` → `self.config.processed_data_path` (core path usage)
+    - ✅ Replace all `MIN_SUPPORT` → `self.config.min_support` (bundle defaults)
+    - ✅ Replace all `MIN_CONFIDENCE` → `self.config.min_confidence` (bundle defaults)
+    - ✅ Replace LLM config globals with `self.config.llm_config`
+    - ✅ Replace cache config globals with `self.config.cache_config`
+    - ⏳ Update all method signatures to use injected config (in progress)
     - Remove global imports from top of file
   - **Acceptance Criteria:** Zero global imports; all tests pass with config injection
 

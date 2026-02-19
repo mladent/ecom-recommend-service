@@ -5,66 +5,30 @@ import pickle
 import logging
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from datetime import datetime
 from typing import Tuple, List, Dict, Optional, Any
-from itertools import combinations
 from collections import Counter
 
 from src.config import (
     PipelineConfig,
     load_config,
     # Keep legacy globals for backward compatibility during Phase 2 transition
-    RAW_DATA_PATH,
-    PROCESSED_DATA_PATH,
-    MIN_SUPPORT,
-    MIN_CONFIDENCE,
-    MAX_BUNDLE_SIZE,
-    RANDOM_STATE,
-    NORMALIZATION_ENABLED,
-    ENRICHMENT_ENABLED,
     ENRICHMENT_BATCH_SIZE,
     ENRICHMENT_FIELDS,
-    ENRICHMENT_CACHE_FIRST,
-    ENRICHMENT_CACHE_PATH,
-    OUTLIER_ENABLED,
-    OUTLIER_CACHE_FIRST,
-    OUTLIER_CACHE_PATH,
     OUTLIER_OUTPUT_PATH,
     OUTLIER_BATCH_SIZE,
     OUTLIER_IQR_MULTIPLIER,
     OUTLIER_FIELDS,
-    CONTEXT_ENABLED,
-    CONTEXT_CACHE_FIRST,
-    CONTEXT_CACHE_PATH,
     CONTEXT_MAX_CONTEXTS,
     CONTEXT_MIN_CONFIDENCE,
-    LLM_PROVIDER,
-    LLM_MODEL,
-    LLM_TEMPERATURE,
-    LLM_MAX_TOKENS,
-    LLM_TIMEOUT_SECONDS,
-    OPENAI_API_KEY,
-    AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_ENDPOINT,
-    AZURE_OPENAI_DEPLOYMENT,
-    AZURE_OPENAI_API_VERSION,
-    GEMINI_API_KEY,
-    ANTHROPIC_API_KEY,
-    PERPLEXITY_API_KEY,
-    PERPLEXITY_BASE_URL,
 )
 from src.llm_client import LLMConfig, LLMClient
 from src.utils import (
-    normalize_description_basic,
-    normalize_description_with_llm,
-    enrich_categories_with_llm,
     enrich_categories_batch_with_llm,
     extract_contexts_with_llm,
     compute_iqr_bounds,
     batch_score_anomalies_with_llm,
     LLMQuotaExceededError,
-    load_alias_map,
     load_json_file,
     save_json_file,
 )
@@ -105,17 +69,18 @@ class DataPipeline:
         Returns:
             Optional[str]: API key for the provider, or None if not configured
         """
+        llm_config = self.config.llm_config
         provider_lower = provider.lower()
         if provider_lower == "openai":
-            return OPENAI_API_KEY
+            return llm_config.openai_api_key
         elif provider_lower == "azure":
-            return AZURE_OPENAI_API_KEY
+            return llm_config.azure_api_key
         elif provider_lower == "gemini":
-            return GEMINI_API_KEY
+            return llm_config.gemini_api_key
         elif provider_lower == "anthropic":
-            return ANTHROPIC_API_KEY
+            return llm_config.anthropic_api_key
         elif provider_lower == "perplexity":
-            return PERPLEXITY_API_KEY
+            return llm_config.perplexity_api_key
         return None
 
     def _get_base_url_for_provider(self, provider: str) -> Optional[str]:
@@ -128,11 +93,11 @@ class DataPipeline:
             Optional[str]: Base URL for the provider, or None if not applicable
         """
         if provider.lower() == "perplexity":
-            return PERPLEXITY_BASE_URL
+            return self.config.llm_config.perplexity_base_url
         return None
 
     def _build_pipeline_llm_config(self) -> LLMConfig:
-        """Build LLMConfig from global configuration settings.
+        """Build LLMConfig from injected PipelineConfig settings.
         
         Centralizes provider-specific credential mapping for all LLM functions
         in the data pipeline, eliminating duplicate config creation across methods.
@@ -140,22 +105,23 @@ class DataPipeline:
         Returns:
             LLMConfig: Configured LLM client configuration object
         """
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        llm_config = self.config.llm_config
+        provider = llm_config.provider.lower() if llm_config.provider else "openai"
         return LLMConfig(
-            provider=LLM_PROVIDER,
-            model=LLM_MODEL,
-            temperature=LLM_TEMPERATURE,
-            max_tokens=LLM_MAX_TOKENS,
-            timeout_seconds=LLM_TIMEOUT_SECONDS,
-            openai_api_key=OPENAI_API_KEY if provider == "openai" else None,
-            azure_api_key=AZURE_OPENAI_API_KEY if provider == "azure" else None,
-            azure_endpoint=AZURE_OPENAI_ENDPOINT if provider == "azure" else None,
-            azure_deployment=AZURE_OPENAI_DEPLOYMENT if provider == "azure" else None,
-            azure_api_version=AZURE_OPENAI_API_VERSION if provider == "azure" else None,
-            gemini_api_key=GEMINI_API_KEY if provider == "gemini" else None,
-            anthropic_api_key=ANTHROPIC_API_KEY if provider == "anthropic" else None,
-            perplexity_api_key=PERPLEXITY_API_KEY if provider == "perplexity" else None,
-            perplexity_base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+            provider=llm_config.provider,
+            model=llm_config.model,
+            temperature=llm_config.temperature,
+            max_tokens=llm_config.max_tokens,
+            timeout_seconds=llm_config.timeout_seconds,
+            openai_api_key=llm_config.openai_api_key if provider == "openai" else None,
+            azure_api_key=llm_config.azure_api_key if provider == "azure" else None,
+            azure_endpoint=llm_config.azure_endpoint if provider == "azure" else None,
+            azure_deployment=llm_config.azure_deployment if provider == "azure" else None,
+            azure_api_version=llm_config.azure_api_version if provider == "azure" else None,
+            gemini_api_key=llm_config.gemini_api_key if provider == "gemini" else None,
+            anthropic_api_key=llm_config.anthropic_api_key if provider == "anthropic" else None,
+            perplexity_api_key=llm_config.perplexity_api_key if provider == "perplexity" else None,
+            perplexity_base_url=llm_config.perplexity_base_url if provider == "perplexity" else None,
         )
 
     def _handle_llm_quota_error_standardized(self, exc: Exception, fallback_strategy: str) -> None:
@@ -208,8 +174,9 @@ class DataPipeline:
             bool: True if successful, False otherwise
         """
         # Check if data already exists
-        if os.path.exists(RAW_DATA_PATH):
-            logger.info(f"Dataset already exists at: {RAW_DATA_PATH}")
+        raw_data_path = self.config.raw_data_path
+        if os.path.exists(raw_data_path):
+            logger.info(f"Dataset already exists at: {raw_data_path}")
             logger.info("Skipping download and continuing with processing")
             return True
 
@@ -220,7 +187,7 @@ class DataPipeline:
             api.authenticate()
 
             dataset_name = "carrie1/ecommerce-data"
-            download_path = os.path.dirname(RAW_DATA_PATH)
+            download_path = os.path.dirname(raw_data_path)
 
             logger.info(f"Downloading dataset: {dataset_name}")
             api.dataset_download_files(dataset_name, path=download_path, unzip=True)
@@ -231,7 +198,7 @@ class DataPipeline:
             logger.error(f"Failed to download Kaggle dataset: {e}")
             return False
 
-    def load_raw_data(self, filepath: str = RAW_DATA_PATH) -> pd.DataFrame:
+    def load_raw_data(self, filepath: Optional[str] = None) -> pd.DataFrame:
         """
         Load raw data from CSV file.
 
@@ -241,12 +208,14 @@ class DataPipeline:
         Returns:
             pd.DataFrame: Raw data
         """
-        if not os.path.exists(filepath):
-            logger.error(f"Data file not found: {filepath}")
-            raise FileNotFoundError(f"Data file not found: {filepath}")
+        data_filepath = filepath or self.config.raw_data_path
 
-        logger.info(f"Loading raw data from: {filepath}")
-        self.raw_data = pd.read_csv(filepath, encoding="ISO-8859-1")
+        if not os.path.exists(data_filepath):
+            logger.error(f"Data file not found: {data_filepath}")
+            raise FileNotFoundError(f"Data file not found: {data_filepath}")
+
+        logger.info(f"Loading raw data from: {data_filepath}")
+        self.raw_data = pd.read_csv(data_filepath, encoding="ISO-8859-1")
         logger.info(f"Loaded {len(self.raw_data)} records, {len(self.raw_data.columns)} columns")
         return self.raw_data
 
@@ -330,7 +299,7 @@ class DataPipeline:
         logger.info(f"Dataset Statistics ({stage} data): {stats}")
         return stats
 
-    def convert_csv_to_tsv(self, input_filepath: str = RAW_DATA_PATH, output_filepath: Optional[str] = None) -> bool:
+    def convert_csv_to_tsv(self, input_filepath: Optional[str] = None, output_filepath: Optional[str] = None) -> bool:
         """
         Convert CSV file to TSV format with UTF-8 encoding.
 
@@ -342,12 +311,14 @@ class DataPipeline:
             bool: True if successful, False otherwise
         """
         try:
+            source_filepath = input_filepath or self.config.raw_data_path
+
             if output_filepath is None:
-                output_filepath = input_filepath.replace(".csv", ".tsv")
+                output_filepath = source_filepath.replace(".csv", ".tsv")
 
             # Load CSV with original encoding
-            logger.info(f"Loading CSV from: {input_filepath}")
-            df = pd.read_csv(input_filepath, encoding="ISO-8859-1")
+            logger.info(f"Loading CSV from: {source_filepath}")
+            df = pd.read_csv(source_filepath, encoding="ISO-8859-1")
 
             # Save as TSV with UTF-8 encoding
             os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
@@ -367,8 +338,9 @@ class DataPipeline:
         # Save cancellations to separate file
         cancellations = df[df["IsCancellation"]]
         if len(cancellations) > 0:
-            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
-            cancellations_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "Cancellations.tsv")
+            processed_dir = os.path.dirname(self.config.processed_data_path)
+            os.makedirs(processed_dir, exist_ok=True)
+            cancellations_path = os.path.join(processed_dir, "Cancellations.tsv")
             cancellations.to_csv(cancellations_path, sep="\t", encoding="utf-8", index=False)
             logger.info(f"Saved {len(cancellations)} cancellations to: {cancellations_path}")
         
@@ -386,8 +358,9 @@ class DataPipeline:
         missing_customer_id = df[df["CustomerID"].isna()]
         
         if len(missing_customer_id) > 0:
-            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
-            no_customer_id_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "no_CustomerID.tsv")
+            processed_dir = os.path.dirname(self.config.processed_data_path)
+            os.makedirs(processed_dir, exist_ok=True)
+            no_customer_id_path = os.path.join(processed_dir, "no_CustomerID.tsv")
             missing_customer_id.to_csv(no_customer_id_path, sep="\t", encoding="utf-8", index=False)
             logger.info(f"Saved {len(missing_customer_id)} records with missing CustomerID to: {no_customer_id_path}")
 
@@ -414,8 +387,9 @@ class DataPipeline:
         duplicates = df[df.duplicated(subset=["InvoiceNo", "StockCode"], keep=False)]
         
         if len(duplicates) > 0:
-            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
-            duplicates_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "Duplicate_transactions.tsv")
+            processed_dir = os.path.dirname(self.config.processed_data_path)
+            os.makedirs(processed_dir, exist_ok=True)
+            duplicates_path = os.path.join(processed_dir, "Duplicate_transactions.tsv")
             duplicates.to_csv(duplicates_path, sep="\t", encoding="utf-8", index=False)
             logger.info(f"Saved {len(duplicates)} duplicate transactions to: {duplicates_path}")
         
@@ -458,14 +432,19 @@ class DataPipeline:
         if "Description" not in df.columns:
             return df
 
-        if not ENRICHMENT_ENABLED:
+        if not self.config.enrichment_enabled:
             logger.info("Category enrichment disabled; skipping")
             return df
 
         # Load cache with unified helper
-        cache = self._validate_and_load_cache(ENRICHMENT_CACHE_PATH, ENRICHMENT_CACHE_FIRST, self.force_reprocess)
+        cache = self._validate_and_load_cache(
+            self.config.cache_config.enrichment_cache_path,
+            self.config.cache_config.enrichment_cache_first,
+            self.force_reprocess,
+        )
 
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        llm_config = self.config.llm_config
+        provider = llm_config.provider.lower() if llm_config.provider else "openai"
         
         # Validate LLM credentials using unified client
         config = self._build_pipeline_llm_config()
@@ -492,7 +471,7 @@ class DataPipeline:
         cache_hits = 0
         
         for desc in unique_descriptions:
-            if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and desc in cache:
+            if self.config.cache_config.enrichment_cache_first and not self.force_reprocess and desc in cache:
                 enrichment_map[desc] = cache[desc]
                 cache_hits += 1
             else:
@@ -508,25 +487,27 @@ class DataPipeline:
                     texts=descriptions_to_enrich,
                     fields=ENRICHMENT_FIELDS,
                     provider=provider,
-                    model=LLM_MODEL,
-                    temperature=LLM_TEMPERATURE,
-                    max_tokens=LLM_MAX_TOKENS,
-                    timeout_seconds=LLM_TIMEOUT_SECONDS,
+                    model=llm_config.model,
+                    temperature=llm_config.temperature,
+                    max_tokens=llm_config.max_tokens,
+                    timeout_seconds=llm_config.timeout_seconds,
                     batch_size=ENRICHMENT_BATCH_SIZE,
                     api_key=self._get_api_key_for_provider(provider),
-                    endpoint=AZURE_OPENAI_ENDPOINT,
-                    deployment=AZURE_OPENAI_DEPLOYMENT,
-                    api_version=AZURE_OPENAI_API_VERSION,
+                    endpoint=llm_config.azure_endpoint,
+                    deployment=llm_config.azure_deployment,
+                    api_version=llm_config.azure_api_version,
                     base_url=self._get_base_url_for_provider(provider),
                 )
                 enrichment_map.update(batch_results)
                 
                 # Update cache with new results
-                if ENRICHMENT_CACHE_FIRST:
+                if self.config.cache_config.enrichment_cache_first:
                     for desc, enriched in batch_results.items():
                         cache[desc] = enriched
-                    save_json_file(ENRICHMENT_CACHE_PATH, cache)
-                    logger.info(f"Saved enrichment cache to: {ENRICHMENT_CACHE_PATH} ({len(cache)} total entries)")
+                    save_json_file(self.config.cache_config.enrichment_cache_path, cache)
+                    logger.info(
+                        f"Saved enrichment cache to: {self.config.cache_config.enrichment_cache_path} ({len(cache)} total entries)"
+                    )
                     
             except LLMQuotaExceededError as exc:
                 self._handle_llm_quota_error_standardized(exc, fallback_strategy="fill_nan")
@@ -579,7 +560,7 @@ class DataPipeline:
         df["InvoiceSeason"] = df["InvoiceDate"].dt.month % 12 // 3 + 1  # type: ignore[attr-defined]
         df["InvoiceDayOfWeek"] = df["InvoiceDate"].dt.dayofweek + 1  # type: ignore[attr-defined]
         df["TransactionValue"] = df["Quantity"] * df["UnitPrice"]
-        if not NORMALIZATION_ENABLED:
+        if not self.config.normalization_enabled:
             df["Description"] = df["Description"].str.strip().str.lower()
         return df
 
@@ -596,7 +577,7 @@ class DataPipeline:
         df["anomaly_type"] = None
         df["anomaly_reason"] = None
 
-        if not OUTLIER_ENABLED:
+        if not self.config.outlier_enabled:
             logger.info("Outlier detection disabled; skipping")
             return df
 
@@ -619,7 +600,8 @@ class DataPipeline:
             logger.info("No IQR outliers detected")
             return df
 
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        llm_config = self.config.llm_config
+        provider = llm_config.provider.lower() if llm_config.provider else "openai"
         
         # Validate LLM credentials using unified client
         config = self._build_pipeline_llm_config()
@@ -629,7 +611,11 @@ class DataPipeline:
         if not llm_available:
             logger.warning("Outlier detection enabled but provider credentials are missing; using heuristic labels")
 
-        cache = self._validate_and_load_cache(OUTLIER_CACHE_PATH, OUTLIER_CACHE_FIRST, self.force_reprocess)
+        cache = self._validate_and_load_cache(
+            self.config.cache_config.outlier_cache_path,
+            self.config.cache_config.outlier_cache_first,
+            self.force_reprocess,
+        )
         cache_updated = False
 
         def _record_key(row: pd.Series) -> str:
@@ -656,7 +642,7 @@ class DataPipeline:
 
         for _, row in candidates.iterrows():
             key = row["_record_key"]
-            if OUTLIER_CACHE_FIRST and not self.force_reprocess and key in cache:
+            if self.config.cache_config.outlier_cache_first and not self.force_reprocess and key in cache:
                 results[key] = cache[key]
                 continue
 
@@ -681,14 +667,14 @@ class DataPipeline:
                     batch_results = batch_score_anomalies_with_llm(
                         records=batch,
                         provider=provider,
-                        model=LLM_MODEL,
-                        temperature=LLM_TEMPERATURE,
-                        max_tokens=LLM_MAX_TOKENS,
-                        timeout_seconds=LLM_TIMEOUT_SECONDS,
+                        model=llm_config.model,
+                        temperature=llm_config.temperature,
+                        max_tokens=llm_config.max_tokens,
+                        timeout_seconds=llm_config.timeout_seconds,
                         api_key=self._get_api_key_for_provider(provider),
-                        endpoint=AZURE_OPENAI_ENDPOINT,
-                        deployment=AZURE_OPENAI_DEPLOYMENT,
-                        api_version=AZURE_OPENAI_API_VERSION,
+                        endpoint=llm_config.azure_endpoint,
+                        deployment=llm_config.azure_deployment,
+                        api_version=llm_config.azure_api_version,
                         base_url=self._get_base_url_for_provider(provider),
                     )
                 except LLMQuotaExceededError as exc:
@@ -725,16 +711,16 @@ class DataPipeline:
             df.at[idx, "anomaly_type"] = result.get("anomaly_type", "none")  # type: ignore[call-overload]
             df.at[idx, "anomaly_reason"] = result.get("anomaly_reason", row.get("_outlier_reasons", ""))  # type: ignore[call-overload]
 
-            if OUTLIER_CACHE_FIRST:
+            if self.config.cache_config.outlier_cache_first:
                 cache[key] = {
                     "anomaly_type": df.at[idx, "anomaly_type"],  # type: ignore[index]
                     "anomaly_reason": df.at[idx, "anomaly_reason"],  # type: ignore[index]
                 }
                 cache_updated = True
 
-        if OUTLIER_CACHE_FIRST and cache_updated:
-            save_json_file(OUTLIER_CACHE_PATH, cache)
-            logger.info(f"Saved outlier cache to: {OUTLIER_CACHE_PATH} ({len(cache)} entries)")
+        if self.config.cache_config.outlier_cache_first and cache_updated:
+            save_json_file(self.config.cache_config.outlier_cache_path, cache)
+            logger.info(f"Saved outlier cache to: {self.config.cache_config.outlier_cache_path} ({len(cache)} entries)")
 
         anomalies = df[df["check_anomaly"]]
         if len(anomalies) > 0:
@@ -758,20 +744,21 @@ class DataPipeline:
         if "Description" not in df.columns:
             return df
 
-        if not CONTEXT_ENABLED:
+        if not self.config.context_enabled:
             logger.info("Context extraction disabled; skipping")
             return df
 
         cache = self._validate_and_load_cache(
-            CONTEXT_CACHE_PATH,
-            CONTEXT_CACHE_FIRST,
+            self.config.cache_config.context_cache_path,
+            self.config.cache_config.context_cache_first,
             self.force_reprocess,
         )
         cache_updated = False
         cache_hits = 0
         cache_misses = 0
 
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+        llm_config = self.config.llm_config
+        provider = llm_config.provider.lower() if llm_config.provider else "openai"
         
         # Validate LLM credentials using unified client
         config = self._build_pipeline_llm_config()
@@ -793,7 +780,7 @@ class DataPipeline:
         for desc in unique_descriptions:
             cache_key = desc
 
-            if CONTEXT_CACHE_FIRST and not self.force_reprocess and cache_key in cache:
+            if self.config.cache_config.context_cache_first and not self.force_reprocess and cache_key in cache:
                 context_map[desc] = cache[cache_key]
                 cache_hits += 1
                 continue
@@ -804,14 +791,14 @@ class DataPipeline:
                         text=desc,
                         max_contexts=CONTEXT_MAX_CONTEXTS,
                         provider=provider,
-                        model=LLM_MODEL,
-                        temperature=LLM_TEMPERATURE,
-                        max_tokens=LLM_MAX_TOKENS,
-                        timeout_seconds=LLM_TIMEOUT_SECONDS,
+                        model=llm_config.model,
+                        temperature=llm_config.temperature,
+                        max_tokens=llm_config.max_tokens,
+                        timeout_seconds=llm_config.timeout_seconds,
                         api_key=self._get_api_key_for_provider(provider),
-                        endpoint=AZURE_OPENAI_ENDPOINT,
-                        deployment=AZURE_OPENAI_DEPLOYMENT,
-                        api_version=AZURE_OPENAI_API_VERSION,
+                        endpoint=llm_config.azure_endpoint,
+                        deployment=llm_config.azure_deployment,
+                        api_version=llm_config.azure_api_version,
                         base_url=self._get_base_url_for_provider(provider),
                     )
                     cache_misses += 1
@@ -826,13 +813,15 @@ class DataPipeline:
                 result = {"contexts": []}
 
             context_map[desc] = result
-            if CONTEXT_CACHE_FIRST:
+            if self.config.cache_config.context_cache_first:
                 cache[cache_key] = result
                 cache_updated = True
 
-        if CONTEXT_CACHE_FIRST and cache_updated:
-            save_json_file(CONTEXT_CACHE_PATH, cache)
-            logger.info(f"Saved context cache to: {CONTEXT_CACHE_PATH} ({cache_hits} hits, {cache_misses} misses)")
+        if self.config.cache_config.context_cache_first and cache_updated:
+            save_json_file(self.config.cache_config.context_cache_path, cache)
+            logger.info(
+                f"Saved context cache to: {self.config.cache_config.context_cache_path} ({cache_hits} hits, {cache_misses} misses)"
+            )
 
         # Add contexts column (comma-separated context strings, filtered by min_confidence)
         def extract_filtered_contexts(desc):
@@ -920,7 +909,10 @@ class DataPipeline:
         return baskets
 
     def generate_product_bundles(
-        self, min_support: float = MIN_SUPPORT, min_confidence: float = MIN_CONFIDENCE, max_size: int = MAX_BUNDLE_SIZE
+        self,
+        min_support: Optional[float] = None,
+        min_confidence: Optional[float] = None,
+        max_size: Optional[int] = None,
     ) -> List[Tuple]:
         """
         Generate product bundles using frequent itemset analysis (Apriori-like approach).
@@ -937,8 +929,12 @@ class DataPipeline:
         if self.transactions is None:
             raise ValueError("Transaction baskets not created. Call create_transaction_baskets first.")
 
+        min_support_value = min_support if min_support is not None else self.config.min_support
+        min_confidence_value = min_confidence if min_confidence is not None else self.config.min_confidence
+        max_size_value = max_size if max_size is not None else self.config.max_bundle_size
+
         logger.info(
-            f"Generating bundles (min_support={min_support}, min_confidence={min_confidence}, max_size={max_size})..."
+            f"Generating bundles (min_support={min_support_value}, min_confidence={min_confidence_value}, max_size={max_size_value})..."
         )
 
         # Get all items and create item-to-index mapping
@@ -950,10 +946,10 @@ class DataPipeline:
         frequent_items = {
             item: count
             for item, count in item_counts.items()
-            if count / total_transactions >= min_support
+            if count / total_transactions >= min_support_value
         }
 
-        logger.info(f"Found {len(frequent_items)} frequent items (support >= {min_support})")
+        logger.info(f"Found {len(frequent_items)} frequent items (support >= {min_support_value})")
 
         # Create item-to-index mapping for matrix operations
         item_to_idx = {item: idx for idx, item in enumerate(frequent_items.keys())}
@@ -968,13 +964,13 @@ class DataPipeline:
                 if item in item_to_idx:
                     transaction_matrix[trans_idx, item_to_idx[item]] = 1
 
-        support_threshold = min_support * total_transactions
+        support_threshold = min_support_value * total_transactions
 
         # Generate itemsets of increasing size
         bundles = []
         current_itemsets = [[item] for item in frequent_items.keys()]
 
-        for size in range(2, max_size + 1):
+        for size in range(2, max_size_value + 1):
             # Generate candidate itemsets using Apriori principle
             candidates_set = set()
             
@@ -1021,7 +1017,7 @@ class DataPipeline:
                     bundles.append(tuple(candidate))
                     valid_count += 1
 
-            logger.info(f"Found {valid_count} frequent itemsets of size {size} (support >= {min_support:.4f})")
+            logger.info(f"Found {valid_count} frequent itemsets of size {size} (support >= {min_support_value:.4f})")
             
             current_itemsets = [list(itemset) for itemset in valid_itemsets]
 
@@ -1034,7 +1030,7 @@ class DataPipeline:
 
         return bundles
 
-    def save_processed_data(self, filepath: str = PROCESSED_DATA_PATH) -> bool:
+    def save_processed_data(self, filepath: Optional[str] = None) -> bool:
         """
         Save processed data to pickle file and a copy to TSV.
 
@@ -1045,8 +1041,9 @@ class DataPipeline:
             bool: True if successful
         """
         try:
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            with open(filepath, "wb") as f:
+            output_filepath = filepath or self.config.processed_data_path
+            os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
+            with open(output_filepath, "wb") as f:
                 pickle.dump(
                     {
                         "processed_data": self.processed_data,
@@ -1056,10 +1053,10 @@ class DataPipeline:
                     },
                     f,
                 )
-            logger.info(f"Processed data saved to: {filepath}")
+            logger.info(f"Processed data saved to: {output_filepath}")
 
             # Also save a copy as TSV for easier inspection
-            tsv_filepath = os.path.splitext(filepath)[0] + ".tsv"
+            tsv_filepath = os.path.splitext(output_filepath)[0] + ".tsv"
             try:
                 self.processed_data.to_csv(tsv_filepath, sep="\t", index=False)  # type: ignore[union-attr]
                 logger.info(f"Processed data also saved to TSV: {tsv_filepath}")
@@ -1071,7 +1068,7 @@ class DataPipeline:
             logger.error(f"Failed to save processed data: {e}")
             return False
 
-    def load_processed_data(self, filepath: str = PROCESSED_DATA_PATH) -> bool:
+    def load_processed_data(self, filepath: Optional[str] = None) -> bool:
         """
         Load processed data from pickle file.
 
@@ -1082,12 +1079,13 @@ class DataPipeline:
             bool: True if successful
         """
         try:
-            with open(filepath, "rb") as f:
+            input_filepath = filepath or self.config.processed_data_path
+            with open(input_filepath, "rb") as f:
                 data = pickle.load(f)
             self.processed_data = data["processed_data"]
             self.transactions = data["transactions"]
             self.bundles = data["bundles"]
-            logger.info(f"Processed data loaded from: {filepath}")
+            logger.info(f"Processed data loaded from: {input_filepath}")
             return True
         except Exception as e:
             logger.error(f"Failed to load processed data: {e}")
