@@ -1,7 +1,7 @@
 # Project To-Do List
 
 **Last Updated:** 19 February 2026  
-**Status:** Phase 1 Complete ✅  
+**Status:** Phase 1 Complete ✅ | Phase 2 In Progress 🚧  
 **Organized by:** Priority & Subsystem
 
 ---
@@ -120,7 +120,7 @@
     - 32% overall code reduction with 100% test pass rate
     - Foundation established for Phase 1.3 (Data Pipeline) and Phase 2 (Config refactoring)
 
-- [ ] **Update Data Pipeline LLM Integration** (P0)
+- [x] **Update Data Pipeline LLM Integration** (P0) ✅ COMPLETE
   - **File:** [src/data_pipeline.py](src/data_pipeline.py)
   - **Strategy:** Hybrid approach—extract helper methods in pipeline, keep utils functions unchanged (zero breaking changes)
   - **Error Handling:** Standardize LLMQuotaExceededError across all 3 methods (graceful fallback behavior)
@@ -360,6 +360,11 @@
 - [ ] **Refactor DataPipeline for Config Injection** (P0)
   - **File:** [src/data_pipeline.py](src/data_pipeline.py)
   - **Current State:** 40+ global config imports
+  - **Progress Update (19 February 2026):**
+    - ✅ Added optional config injection in constructor: `DataPipeline.__init__(..., config: Optional[PipelineConfig] = None)`
+    - ✅ Added default config loading path via `load_config()` when config is not provided (backward compatibility preserved)
+    - ✅ Commit pushed: `d12636e` (`refactor: inject pipeline config`)
+    - ⏳ Remaining: migrate method bodies from global constants to `self.config.*` and remove legacy global imports
   - **Tasks:**
     - Add `__init__(self, config: PipelineConfig)` to DataPipeline
     - Replace all `RAW_DATA_PATH` → `self.config.raw_data_path`
