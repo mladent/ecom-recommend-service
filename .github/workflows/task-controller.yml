@@ -34,4 +34,4 @@ jobs:
           else
             DIFF_RANGE="HEAD~1...HEAD"
           fi
-          python scripts/run_controller.py --diff-range "$DIFF_RANGE"
+          python scripts/run_controller.py --mode ci --diff-range "$DIFF_RANGE"

@@ -107,7 +107,7 @@ test-parallel:
 
 controller-check:
 	@echo "$(BLUE)Running task controller checks...$(NC)"
-	python scripts/run_controller.py --staged
+	python scripts/run_controller.py --staged --mode pre-commit
 
 hooks-install:
 	@echo "$(BLUE)Installing git hooks...$(NC)"

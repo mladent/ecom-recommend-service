@@ -19,7 +19,7 @@ if [[ -d "venv" ]]; then
   source venv/bin/activate
 fi
 
-python scripts/run_controller.py --staged
+python scripts/run_controller.py --staged --mode pre-commit
 EOF
 
 chmod +x "$HOOK_PATH"
