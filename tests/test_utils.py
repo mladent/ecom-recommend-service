@@ -458,38 +458,28 @@ class TestEnrichCategoriesWithLLM:
     - Unicode field names and values
     """
 
-    def test_empty_input_all_nan(self):
+    def test_empty_input_all_nan(self, typed_llm_config):
         """Empty description returns all fields as NaN."""
         result = enrich_categories_with_llm(
             text="",
             fields=["category", "subcategory", "material", "color"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert all(v == "NaN" for v in result.values())
 
-    def test_none_input_all_nan(self):
+    def test_none_input_all_nan(self, typed_llm_config):
         """None description returns all fields as NaN."""
         result = enrich_categories_with_llm(
             text=None,
             fields=["category", "subcategory", "material"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert all(v == "NaN" for v in result.values())
 
     @patch("urllib.request.urlopen")
-    def test_valid_response_all_fields(self, mock_urlopen, mock_llm_response_categories):
+    def test_valid_response_all_fields(self, mock_urlopen, mock_llm_response_categories, typed_llm_config):
         """Valid response with all fields returns dict with expected structure."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_categories).encode("utf-8")
@@ -498,12 +488,7 @@ class TestEnrichCategoriesWithLLM:
         result = enrich_categories_with_llm(
             text="Blue cotton shirt",
             fields=["category", "subcategory", "material", "size", "color", "price_range"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         # Check structure: should return dict with requested fields
@@ -511,7 +496,7 @@ class TestEnrichCategoriesWithLLM:
         assert len(result) == 6  # 6 fields requested
 
     @patch("urllib.request.urlopen")
-    def test_missing_fields_default_to_nan(self, mock_urlopen, mock_llm_response_categories_with_nan):
+    def test_missing_fields_default_to_nan(self, mock_urlopen, mock_llm_response_categories_with_nan, typed_llm_config):
         """Missing/NaN fields in response remain as NaN."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_categories_with_nan).encode("utf-8")
@@ -520,12 +505,7 @@ class TestEnrichCategoriesWithLLM:
         result = enrich_categories_with_llm(
             text="Blue cotton shirt",
             fields=["category", "subcategory", "material", "size", "color", "price_range"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert result["subcategory"] == "NaN"
@@ -533,7 +513,7 @@ class TestEnrichCategoriesWithLLM:
         assert result["price_range"] == "NaN"
 
     @patch("urllib.request.urlopen")
-    def test_invalid_json_all_nan(self, mock_urlopen):
+    def test_invalid_json_all_nan(self, mock_urlopen, typed_llm_config):
         """Invalid JSON response returns all NaN."""
         mock_response = MagicMock()
         mock_response.read.return_value = b"not valid json {{{{"
@@ -542,58 +522,60 @@ class TestEnrichCategoriesWithLLM:
         result = enrich_categories_with_llm(
             text="Test product",
             fields=["category", "material", "color"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert all(v == "NaN" for v in result.values())
 
     @patch("urllib.request.urlopen")
-    def test_service_error_all_nan(self, mock_urlopen):
+    def test_service_error_all_nan(self, mock_urlopen, typed_llm_config):
         """Service error returns all NaN gracefully."""
         mock_urlopen.side_effect = Exception("Service unavailable")
 
         result = enrich_categories_with_llm(
             text="Test product",
             fields=["category", "material"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert all(v == "NaN" for v in result.values())
 
     @patch("urllib.request.urlopen")
     @pytest.mark.parametrize("provider", ["openai", "azure", "gemini", "anthropic", "perplexity"])
-    def test_all_providers_supported(self, mock_urlopen, provider, mock_llm_response_categories):
+    def test_all_providers_supported(self, mock_urlopen, provider, mock_llm_response_categories, typed_llm_config):
         """All 5 LLM providers work identically."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_categories).encode("utf-8")
         mock_urlopen.return_value = mock_response
 
+        llm_config = AppLLMConfig(
+            provider=provider,
+            model="appropriate-for-provider",
+            temperature=typed_llm_config.temperature,
+            max_tokens=typed_llm_config.max_tokens,
+            timeout_seconds=typed_llm_config.timeout_seconds,
+            openai_api_key=typed_llm_config.openai_api_key,
+            azure_api_key=typed_llm_config.azure_api_key,
+            azure_endpoint=typed_llm_config.azure_endpoint,
+            azure_deployment=typed_llm_config.azure_deployment,
+            azure_api_version=typed_llm_config.azure_api_version,
+            gemini_api_key=typed_llm_config.gemini_api_key,
+            anthropic_api_key=typed_llm_config.anthropic_api_key,
+            perplexity_api_key=typed_llm_config.perplexity_api_key,
+            perplexity_base_url=typed_llm_config.perplexity_base_url,
+        )
+
         result = enrich_categories_with_llm(
             text="Test product",
             fields=["category", "material", "color"],
-            provider=provider,
-            model="appropriate-for-provider",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=llm_config,
         )
 
         assert len(result) == 3
         assert any(v != "NaN" for v in result.values()) or all(v == "NaN" for v in result.values())
 
     @patch("urllib.request.urlopen")
-    def test_field_order_preserved(self, mock_urlopen, mock_llm_response_categories):
+    def test_field_order_preserved(self, mock_urlopen, mock_llm_response_categories, typed_llm_config):
         """Response fields appear in requested field order."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_categories).encode("utf-8")
@@ -603,12 +585,7 @@ class TestEnrichCategoriesWithLLM:
         result = enrich_categories_with_llm(
             text="Test product",
             fields=fields,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         # Result should have same fields
