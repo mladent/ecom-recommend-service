@@ -1,6 +1,6 @@
 # Project To-Do List
 
-**Last Updated:** 19 February 2026  
+**Last Updated:** 20 February 2026  
 **Status:** Phase 1 Complete ✅ | Phase 2 In Progress 🚧  
 **Organized by:** Priority & Subsystem
 
@@ -446,14 +446,16 @@
 - [ ] **Update Test Suite for Config Injection** (P0)
   - **Files:** All [tests/*.py](tests/) files
   - **Progress Update (20 February 2026):**
-    - ✅ Added config-injection coverage for recommendation engine and utils
-    - ⏳ Remaining: migrate broad monkeypatch-heavy tests to shared config fixtures across full suite
+    - ✅ Added shared typed config fixtures in [tests/conftest.py](tests/conftest.py)
+    - ✅ Migrated one-file slices: [tests/test_data_pipeline.py](tests/test_data_pipeline.py), [tests/test_recommendation_engine.py](tests/test_recommendation_engine.py), [tests/test_api.py](tests/test_api.py), [tests/test_llm_integration.py](tests/test_llm_integration.py)
+    - ✅ Targeted matrix passed: `tests/test_data_pipeline.py tests/test_recommendation_engine.py tests/test_api.py tests/test_llm_integration.py tests/test_utils.py` → 357 passed, 3 skipped
+    - ⏳ Remaining: continue reducing repetitive explicit LLM argument patterns in [tests/test_utils.py](tests/test_utils.py) and finalize full-suite fixture migration
   - **Tasks:**
-    - Create pytest fixtures for default configs
-    - Create fixtures for test-specific configs
-    - Replace monkeypatching of globals with config injection
-    - Add config variation tests
-    - Update test documentation
+    - ✅ Create pytest fixtures for default configs
+    - ✅ Create fixtures for test-specific configs
+    - ✅ Replace monkeypatching of globals with config injection (major files)
+    - ⏳ Add config variation tests
+    - ⏳ Update test documentation
   - **Acceptance Criteria:** All tests use fixtures; no monkeypatching
 
 **Metrics:**
