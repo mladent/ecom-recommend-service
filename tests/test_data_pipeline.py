@@ -111,24 +111,6 @@ def temp_data_directory():
 
 
 @pytest.fixture
-def config_with_llm_disabled(monkeypatch):
-    """Configure with all LLM features disabled."""
-    monkeypatch.setenv('NORMALIZATION_ENABLED', 'false')
-    monkeypatch.setenv('ENRICHMENT_ENABLED', 'false')
-    monkeypatch.setenv('OUTLIER_ENABLED', 'false')
-    monkeypatch.setenv('CONTEXT_ENABLED', 'false')
-
-
-@pytest.fixture
-def config_with_llm_enabled(monkeypatch):
-    """Configure with LLM features enabled (with mocking)."""
-    monkeypatch.setenv('NORMALIZATION_ENABLED', 'true')
-    monkeypatch.setenv('ENRICHMENT_ENABLED', 'true')
-    monkeypatch.setenv('OUTLIER_ENABLED', 'true')
-    monkeypatch.setenv('CONTEXT_ENABLED', 'true')
-
-
-@pytest.fixture
 def mock_llm_functions(monkeypatch):
     """Mock all LLM function calls for speed & consistency."""
     
@@ -189,16 +171,18 @@ def mock_llm_client(monkeypatch):
     """Mock LLMClient methods to return deterministic LLM outputs."""
 
     def mock_validate_credentials(self):
-        return any(
-            os.getenv(key)
-            for key in (
-                "OPENAI_API_KEY",
-                "AZURE_OPENAI_API_KEY",
-                "GEMINI_API_KEY",
-                "ANTHROPIC_API_KEY",
-                "PERPLEXITY_API_KEY",
-            )
-        )
+        provider = (self.config.provider or "openai").lower()
+        if provider == "openai":
+            return bool(self.config.openai_api_key)
+        if provider == "azure":
+            return bool(self.config.azure_api_key)
+        if provider == "gemini":
+            return bool(self.config.gemini_api_key)
+        if provider == "anthropic":
+            return bool(self.config.anthropic_api_key)
+        if provider == "perplexity":
+            return bool(self.config.perplexity_api_key)
+        return False
 
     def mock_chat_completion_json(self, system_prompt, user_prompt):
         content = f"{system_prompt} {user_prompt}".lower()
@@ -611,12 +595,16 @@ class TestBundleGeneration:
 class TestLLMFeatures:
     """Test LLM-dependent features with mocking."""
     
-    def test_enrich_categories_cache_first(self, minimal_dataframe, mock_llm_client, monkeypatch):
+    def test_enrich_categories_cache_first(
+        self,
+        minimal_dataframe,
+        mock_llm_client,
+        pipeline_config_llm_enabled,
+    ):
         """Test category enrichment uses cache-first pattern."""
-        monkeypatch.setenv('ENRICHMENT_ENABLED', 'true')
-        monkeypatch.setenv('ENRICHMENT_CACHE_FIRST', 'true')
-        
-        pipeline = DataPipeline()
+        pipeline_config_llm_enabled.enrichment_enabled = True
+        pipeline_config_llm_enabled.cache_config.enrichment_cache_first = True
+        pipeline = DataPipeline(config=pipeline_config_llm_enabled)
         pipeline.raw_data = minimal_dataframe.copy()
         
         # Run preprocessing with enrichment mocked
@@ -625,23 +613,31 @@ class TestLLMFeatures:
         # Should complete without LLM errors
         assert result is not None
     
-    def test_enrich_categories_no_credentials(self, minimal_dataframe, mock_llm_client, monkeypatch):
+    def test_enrich_categories_no_credentials(
+        self,
+        minimal_dataframe,
+        mock_llm_client,
+        pipeline_config_llm_enabled,
+    ):
         """Test graceful handling when LLM credentials missing."""
-        monkeypatch.setenv('ENRICHMENT_ENABLED', 'true')
-        monkeypatch.setenv('OPENAI_API_KEY', '')
-        
-        pipeline = DataPipeline()
+        pipeline_config_llm_enabled.enrichment_enabled = True
+        pipeline_config_llm_enabled.llm_config.openai_api_key = ""
+        pipeline = DataPipeline(config=pipeline_config_llm_enabled)
         pipeline.raw_data = minimal_dataframe.copy()
         
         # Should not crash, just skip enrichment or fill with NaN
         result = pipeline.preprocess()
         assert result is not None
     
-    def test_flag_anomalies_iqr_detection(self, minimal_dataframe, mock_llm_client, monkeypatch):
+    def test_flag_anomalies_iqr_detection(
+        self,
+        minimal_dataframe,
+        mock_llm_client,
+        pipeline_config_llm_disabled,
+    ):
         """Test IQR-based anomaly detection."""
-        monkeypatch.setenv('OUTLIER_ENABLED', 'false')  # Use heuristic only
-        
-        pipeline = DataPipeline()
+        pipeline_config_llm_disabled.outlier_enabled = False
+        pipeline = DataPipeline(config=pipeline_config_llm_disabled)
         pipeline.raw_data = minimal_dataframe.copy()
         
         result = pipeline.preprocess()
@@ -650,11 +646,15 @@ class TestLLMFeatures:
         if 'check_anomaly' in result.columns:
             assert isinstance(result['check_anomaly'].iloc[0], (bool, np.bool_))
     
-    def test_extract_contexts_mocked(self, minimal_dataframe, mock_llm_client, monkeypatch):
+    def test_extract_contexts_mocked(
+        self,
+        minimal_dataframe,
+        mock_llm_client,
+        pipeline_config_llm_enabled,
+    ):
         """Test context extraction with mock."""
-        monkeypatch.setenv('CONTEXT_ENABLED', 'true')
-        
-        pipeline = DataPipeline()
+        pipeline_config_llm_enabled.context_enabled = True
+        pipeline = DataPipeline(config=pipeline_config_llm_enabled)
         pipeline.raw_data = minimal_dataframe.copy()
         
         result = pipeline.preprocess()
@@ -863,19 +863,20 @@ class TestSerialization:
 class TestFullPipeline:
     """Test end-to-end workflows."""
     
-    def test_pipeline_load_to_baskets(self, realistic_sample_dataframe, temp_data_directory, mock_llm_client, monkeypatch):
+    def test_pipeline_load_to_baskets(
+        self,
+        realistic_sample_dataframe,
+        temp_data_directory,
+        mock_llm_client,
+        pipeline_config_llm_disabled,
+    ):
         """Full pipeline: load → preprocess → create baskets."""
-        # Disable LLM to speed up test
-        monkeypatch.setenv('ENRICHMENT_ENABLED', 'false')
-        monkeypatch.setenv('OUTLIER_ENABLED', 'false')
-        monkeypatch.setenv('CONTEXT_ENABLED', 'false')
-        
         # Save test data
         csv_path = os.path.join(temp_data_directory, 'test_data.csv')
         realistic_sample_dataframe.to_csv(csv_path, index=False, encoding='ISO-8859-1')
         
         # Run pipeline
-        pipeline = DataPipeline()
+        pipeline = DataPipeline(config=pipeline_config_llm_disabled)
         pipeline.load_raw_data(csv_path)
         processed = pipeline.preprocess()
         baskets = pipeline.create_transaction_baskets()
@@ -883,17 +884,19 @@ class TestFullPipeline:
         assert len(processed) > 0
         assert len(baskets) >= 0
     
-    def test_pipeline_load_to_bundles(self, transaction_baskets_dataframe, temp_data_directory, monkeypatch):
+    def test_pipeline_load_to_bundles(
+        self,
+        transaction_baskets_dataframe,
+        temp_data_directory,
+        pipeline_config_llm_disabled,
+    ):
         """Full pipeline: load → preprocess → baskets → bundles."""
-        monkeypatch.setenv('ENRICHMENT_ENABLED', 'false')
-        monkeypatch.setenv('OUTLIER_ENABLED', 'false')
-        
         # Save test data
         csv_path = os.path.join(temp_data_directory, 'baskets.csv')
         transaction_baskets_dataframe.to_csv(csv_path, index=False, encoding='ISO-8859-1')
         
         # Run pipeline
-        pipeline = DataPipeline()
+        pipeline = DataPipeline(config=pipeline_config_llm_disabled)
         pipeline.load_raw_data(csv_path)
         processed = pipeline.preprocess()
         baskets = pipeline.create_transaction_baskets()
@@ -903,21 +906,23 @@ class TestFullPipeline:
         assert len(baskets) > 0
         assert isinstance(bundles, list)
     
-    def test_pipeline_reproducibility(self, realistic_sample_dataframe, temp_data_directory, monkeypatch):
+    def test_pipeline_reproducibility(
+        self,
+        realistic_sample_dataframe,
+        temp_data_directory,
+        pipeline_config_llm_disabled,
+    ):
         """Same RANDOM_STATE produces same results."""
-        monkeypatch.setenv('ENRICHMENT_ENABLED', 'false')
-        monkeypatch.setenv('OUTLIER_ENABLED', 'false')
-        
         csv_path = os.path.join(temp_data_directory, 'repro_test.csv')
         realistic_sample_dataframe.to_csv(csv_path, index=False, encoding='ISO-8859-1')
         
         # First run
-        pipeline1 = DataPipeline()
+        pipeline1 = DataPipeline(config=pipeline_config_llm_disabled)
         pipeline1.load_raw_data(csv_path)
         processed1 = pipeline1.preprocess()
         
         # Second run (same data, same seed)
-        pipeline2 = DataPipeline()
+        pipeline2 = DataPipeline(config=pipeline_config_llm_disabled)
         pipeline2.load_raw_data(csv_path)
         processed2 = pipeline2.preprocess()
         
