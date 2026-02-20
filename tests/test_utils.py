@@ -1664,48 +1664,33 @@ class TestLLMQuotaExceededError:
 class TestNormalizeDescriptionWithLLM:
     """Tests for LLM-based description normalization."""
     
-    def test_normalize_empty_text(self):
+    def test_normalize_empty_text(self, typed_llm_config):
         """Test normalization of empty text returns empty string."""
         from src.utils import normalize_description_with_llm
         result = normalize_description_with_llm(
             "",
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=100,
-            timeout_seconds=30,
-            api_key="fake-key"
+            llm_config=typed_llm_config,
         )
         assert result == ""
     
-    def test_normalize_none_text(self):
+    def test_normalize_none_text(self, typed_llm_config):
         """Test normalization of None text."""
         from src.utils import normalize_description_with_llm
         result = normalize_description_with_llm(
             None,
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=100,
-            timeout_seconds=30,
-            api_key="fake-key"
+            llm_config=typed_llm_config,
         )
         assert result == ""
     
     @patch('src.llm_client.LLMClient.chat_completion')
-    def test_normalize_openai_success(self, mock_chat):
+    def test_normalize_openai_success(self, mock_chat, typed_llm_config):
         """Test successful OpenAI normalization."""
         from src.utils import normalize_description_with_llm
         mock_chat.return_value = "normalized description"
         
         result = normalize_description_with_llm(
             "messy description",
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=100,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == "normalized description"
@@ -1715,17 +1700,20 @@ class TestNormalizeDescriptionWithLLM:
         """Test successful Azure normalization."""
         from src.utils import normalize_description_with_llm
         mock_chat.return_value = "normalized"
-        
-        result = normalize_description_with_llm(
-            "test",
+        llm_config = AppLLMConfig(
             provider="azure",
             model="gpt-4",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key",
-            endpoint="https://test.openai.azure.com",
-            deployment="test-deployment"
+            azure_api_key="test-key",
+            azure_endpoint="https://test.openai.azure.com",
+            azure_deployment="test-deployment",
+        )
+        
+        result = normalize_description_with_llm(
+            "test",
+            llm_config=llm_config,
         )
         
         assert result == "normalized"
@@ -1735,15 +1723,18 @@ class TestNormalizeDescriptionWithLLM:
         """Test successful Gemini normalization."""
         from src.utils import normalize_description_with_llm
         mock_chat.return_value = "normalized"
-        
-        result = normalize_description_with_llm(
-            "test",
+        llm_config = AppLLMConfig(
             provider="gemini",
             model="gemini-pro",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key"
+            gemini_api_key="test-key",
+        )
+        
+        result = normalize_description_with_llm(
+            "test",
+            llm_config=llm_config,
         )
         
         assert result == "normalized"
@@ -1753,15 +1744,18 @@ class TestNormalizeDescriptionWithLLM:
         """Test successful Anthropic normalization."""
         from src.utils import normalize_description_with_llm
         mock_chat.return_value = "normalized"
-        
-        result = normalize_description_with_llm(
-            "test",
+        llm_config = AppLLMConfig(
             provider="anthropic",
             model="claude-3",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key"
+            anthropic_api_key="test-key",
+        )
+        
+        result = normalize_description_with_llm(
+            "test",
+            llm_config=llm_config,
         )
         
         assert result == "normalized"
@@ -1771,15 +1765,18 @@ class TestNormalizeDescriptionWithLLM:
         """Test successful Perplexity normalization."""
         from src.utils import normalize_description_with_llm
         mock_chat.return_value = "normalized"
-        
-        result = normalize_description_with_llm(
-            "test",
+        llm_config = AppLLMConfig(
             provider="perplexity",
             model="pplx-7b",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key"
+            perplexity_api_key="test-key",
+        )
+        
+        result = normalize_description_with_llm(
+            "test",
+            llm_config=llm_config,
         )
         
         assert result == "normalized"
@@ -1787,13 +1784,17 @@ class TestNormalizeDescriptionWithLLM:
     def test_normalize_missing_openai_key(self):
         """Test OpenAI normalization with missing API key."""
         from src.utils import normalize_description_with_llm
-        result = normalize_description_with_llm(
-            "test description",
+        llm_config = AppLLMConfig(
             provider="openai",
             model="gpt-4",
             temperature=0.7,
             max_tokens=100,
-            timeout_seconds=30
+            timeout_seconds=30,
+            openai_api_key=None,
+        )
+        result = normalize_description_with_llm(
+            "test description",
+            llm_config=llm_config,
         )
         # Should fallback to original text on error
         assert result == "test description"
@@ -1801,20 +1802,24 @@ class TestNormalizeDescriptionWithLLM:
     def test_normalize_missing_azure_credentials(self):
         """Test Azure normalization with missing credentials."""
         from src.utils import normalize_description_with_llm
-        result = normalize_description_with_llm(
-            "test description",
+        llm_config = AppLLMConfig(
             provider="azure",
             model="gpt-4",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key"
-            # Missing endpoint and deployment
+            azure_api_key="test-key",
+            azure_endpoint=None,
+            azure_deployment=None,
+        )
+        result = normalize_description_with_llm(
+            "test description",
+            llm_config=llm_config,
         )
         assert result == "test description"
     
     @patch('src.llm_client.LLMClient.chat_completion')
-    def test_normalize_quota_exceeded(self, mock_chat):
+    def test_normalize_quota_exceeded(self, mock_chat, typed_llm_config):
         """Test handling of quota exceeded error."""
         from src.utils import normalize_description_with_llm
         mock_chat.side_effect = RuntimeError("insufficient_quota")
@@ -1822,28 +1827,18 @@ class TestNormalizeDescriptionWithLLM:
         with pytest.raises(LLMQuotaExceededError):
             normalize_description_with_llm(
                 "test",
-                provider="openai",
-                model="gpt-4",
-                temperature=0.7,
-                max_tokens=100,
-                timeout_seconds=30,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
     
     @patch('src.llm_client.LLMClient.chat_completion')
-    def test_normalize_generic_error_fallback(self, mock_chat):
+    def test_normalize_generic_error_fallback(self, mock_chat, typed_llm_config):
         """Test fallback to original text on generic error."""
         from src.utils import normalize_description_with_llm
         mock_chat.side_effect = RuntimeError("API error")
         
         result = normalize_description_with_llm(
             "original text",
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=100,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == "original text"
