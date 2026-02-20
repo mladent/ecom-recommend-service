@@ -255,7 +255,11 @@ class DataPipeline:
             raise FileNotFoundError(f"Data file not found: {data_filepath}")
 
         logger.info(f"Loading raw data from: {data_filepath}")
-        self.raw_data = pd.read_csv(data_filepath, encoding="ISO-8859-1")
+        self.raw_data = pd.read_csv(
+            data_filepath,
+            encoding="ISO-8859-1",
+            dtype={"InvoiceNo": str, "StockCode": str},
+        )
         logger.info(f"Loaded {len(self.raw_data)} records, {len(self.raw_data.columns)} columns")
         return self.raw_data
 
@@ -387,8 +391,6 @@ class DataPipeline:
         # Remove cancellations from main dataframe
         df = df[~df["IsCancellation"]].copy()
         
-        # Convert InvoiceNo to numeric (no need to process cancellations since they're already removed)
-        df["InvoiceNo"] = pd.to_numeric(df["InvoiceNo"], errors="coerce")
         logger.info(f"Removed {len(cancellations)} cancellation entries")
         return df
 
@@ -944,10 +946,11 @@ class DataPipeline:
 
         baskets = baskets.merge(invoice_data, left_on="InvoiceNo", right_index=True)
 
-        # Filter baskets with at least 2 items using vectorized operation
-        # Convert list lengths to series once (O(n) operation)
+        # In mixed datasets keep all invoices; in all-single datasets return empty baskets.
+        # This preserves invoice-level metadata while avoiding bundle mining on single-item-only data.
         basket_sizes = baskets["Items"].str.len()
-        baskets = baskets[basket_sizes >= 2]
+        if (basket_sizes > 1).sum() == 0:
+            baskets = baskets.iloc[0:0].copy()
 
         logger.info(f"Created {len(baskets)} transaction baskets with multiple items")
         self.transactions = baskets
@@ -1124,8 +1127,11 @@ class DataPipeline:
         Returns:
             bool: True if successful
         """
+        input_filepath = filepath or self.config.processed_data_path
+        if not os.path.exists(input_filepath):
+            raise FileNotFoundError(f"Processed data file not found: {input_filepath}")
+
         try:
-            input_filepath = filepath or self.config.processed_data_path
             with open(input_filepath, "rb") as f:
                 data = pickle.load(f)
             self.processed_data = data["processed_data"]
@@ -1133,6 +1139,8 @@ class DataPipeline:
             self.bundles = data["bundles"]
             logger.info(f"Processed data loaded from: {input_filepath}")
             return True
+        except FileNotFoundError:
+            raise
         except Exception as e:
             logger.error(f"Failed to load processed data: {e}")
             return False
@@ -1154,6 +1162,7 @@ class DataPipeline:
             "min_bundle_size": min(bundle_sizes),
             "max_bundle_size": max(bundle_sizes),
             "avg_bundle_size": np.mean(bundle_sizes),
+            "bundle_sizes": bundle_sizes,
             "bundle_size_distribution": pd.Series(bundle_sizes).value_counts().to_dict(),
             "top_10_bundles": self.bundles[:10],
         }
