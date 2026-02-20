@@ -1876,40 +1876,30 @@ class TestNormalizeDescriptionWithLLM:
 class TestSelectAlternativesWithLLM:
     """Tests for LLM-based alternative selection."""
     
-    def test_select_alternatives_empty_item(self):
+    def test_select_alternatives_empty_item(self, typed_llm_config):
         """Test alternative selection with empty missing item."""
         from src.utils import select_alternatives_with_llm
         result = select_alternatives_with_llm(
             "",
             ["item1", "item2"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         assert result == []
     
-    def test_select_alternatives_empty_candidates(self):
+    def test_select_alternatives_empty_candidates(self, typed_llm_config):
         """Test alternative selection with empty candidates."""
         from src.utils import select_alternatives_with_llm
         result = select_alternatives_with_llm(
             "missing_item",
             [],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         assert result == []
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_openai_success(self, mock_chat):
+    def test_select_alternatives_openai_success(self, mock_chat, typed_llm_config):
         """Test successful OpenAI alternative selection."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.95, "reason": "similar"}]}
@@ -1917,13 +1907,8 @@ class TestSelectAlternativesWithLLM:
         result = select_alternatives_with_llm(
             "missing",
             ["alt1", "alt2"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert len(result) == 1
@@ -1931,7 +1916,7 @@ class TestSelectAlternativesWithLLM:
         assert result[0]["score"] == 0.95
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_with_markdown_fence(self, mock_chat):
+    def test_select_alternatives_with_markdown_fence(self, mock_chat, typed_llm_config):
         """Test parsing response with markdown code fence."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = [{"item": "alt1", "score": 0.9, "reason": "best match"}]
@@ -1939,20 +1924,15 @@ class TestSelectAlternativesWithLLM:
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert len(result) == 1
         assert result[0]["item"] == "alt1"
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_max_alternatives_limit(self, mock_chat):
+    def test_select_alternatives_max_alternatives_limit(self, mock_chat, typed_llm_config):
         """Test that results are limited by max_alternatives."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = {
@@ -1967,19 +1947,14 @@ class TestSelectAlternativesWithLLM:
         result = select_alternatives_with_llm(
             "missing",
             ["alt1", "alt2", "alt3", "alt4"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=2,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert len(result) == 2
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_raw_list_response(self, mock_chat):
+    def test_select_alternatives_raw_list_response(self, mock_chat, typed_llm_config):
         """Test parsing when response is raw list (not wrapped dict)."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = [
@@ -1989,13 +1964,8 @@ class TestSelectAlternativesWithLLM:
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert len(result) == 1
@@ -2005,19 +1975,22 @@ class TestSelectAlternativesWithLLM:
         """Test successful Azure alternative selection."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
-        
-        result = select_alternatives_with_llm(
-            "missing",
-            ["alt1"],
+        llm_config = AppLLMConfig(
             provider="azure",
             model="gpt-4",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
+            azure_api_key="test-key",
+            azure_endpoint="https://test.openai.azure.com",
+            azure_deployment="test",
+        )
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
             max_alternatives=3,
-            api_key="test-key",
-            endpoint="https://test.openai.azure.com",
-            deployment="test"
+            llm_config=llm_config,
         )
         
         assert len(result) == 1
@@ -2027,17 +2000,20 @@ class TestSelectAlternativesWithLLM:
         """Test successful Gemini alternative selection."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
-        
-        result = select_alternatives_with_llm(
-            "missing",
-            ["alt1"],
+        llm_config = AppLLMConfig(
             provider="gemini",
             model="gemini-pro",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
+            gemini_api_key="test-key",
+        )
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=llm_config,
         )
         
         assert len(result) == 1
@@ -2047,17 +2023,20 @@ class TestSelectAlternativesWithLLM:
         """Test successful Anthropic alternative selection."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
-        
-        result = select_alternatives_with_llm(
-            "missing",
-            ["alt1"],
+        llm_config = AppLLMConfig(
             provider="anthropic",
             model="claude-3",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
+            anthropic_api_key="test-key",
+        )
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=llm_config,
         )
         
         assert len(result) == 1
@@ -2067,23 +2046,26 @@ class TestSelectAlternativesWithLLM:
         """Test successful Perplexity alternative selection."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
-        
-        result = select_alternatives_with_llm(
-            "missing",
-            ["alt1"],
+        llm_config = AppLLMConfig(
             provider="perplexity",
             model="pplx-7b",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
+            perplexity_api_key="test-key",
+        )
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=llm_config,
         )
         
         assert len(result) == 1
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_invalid_json(self, mock_chat):
+    def test_select_alternatives_invalid_json(self, mock_chat, typed_llm_config):
         """Test fallback on invalid JSON response."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = "invalid json content"
@@ -2091,19 +2073,14 @@ class TestSelectAlternativesWithLLM:
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == []
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_invalid_schema(self, mock_chat):
+    def test_select_alternatives_invalid_schema(self, mock_chat, typed_llm_config):
         """Test fallback on schema validation failure."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = '{"invalid": "structure"}'
@@ -2111,19 +2088,14 @@ class TestSelectAlternativesWithLLM:
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == []
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_non_list_alternatives(self, mock_chat):
+    def test_select_alternatives_non_list_alternatives(self, mock_chat, typed_llm_config):
         """Test fallback when alternatives field is not a list."""
         from src.utils import select_alternatives_with_llm
         mock_chat.return_value = {"alternatives": "not a list"}
@@ -2131,19 +2103,14 @@ class TestSelectAlternativesWithLLM:
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == []
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_quota_exceeded(self, mock_chat):
+    def test_select_alternatives_quota_exceeded(self, mock_chat, typed_llm_config):
         """Test handling of quota exceeded during selection."""
         from src.utils import select_alternatives_with_llm
         mock_chat.side_effect = RuntimeError("quota exceeded")
@@ -2152,17 +2119,12 @@ class TestSelectAlternativesWithLLM:
             select_alternatives_with_llm(
                 "missing",
                 ["alt1"],
-                provider="openai",
-                model="gpt-4",
-                temperature=0.7,
-                max_tokens=500,
-                timeout_seconds=30,
                 max_alternatives=3,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
     
     @patch('src.llm_client.LLMClient.chat_completion_json')
-    def test_select_alternatives_generic_error_fallback(self, mock_chat):
+    def test_select_alternatives_generic_error_fallback(self, mock_chat, typed_llm_config):
         """Test fallback to empty list on generic error."""
         from src.utils import select_alternatives_with_llm
         mock_chat.side_effect = RuntimeError("API error")
@@ -2170,13 +2132,8 @@ class TestSelectAlternativesWithLLM:
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == []
@@ -2184,15 +2141,19 @@ class TestSelectAlternativesWithLLM:
     def test_select_alternatives_missing_openai_key(self):
         """Test with missing OpenAI API key."""
         from src.utils import select_alternatives_with_llm
-        result = select_alternatives_with_llm(
-            "missing",
-            ["alt1"],
+        llm_config = AppLLMConfig(
             provider="openai",
             model="gpt-4",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
+            openai_api_key=None,
+        )
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
             max_alternatives=3
+            , llm_config=llm_config
         )
         assert result == []
     
