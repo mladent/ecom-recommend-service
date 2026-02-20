@@ -275,6 +275,7 @@ tests/         # Test suite
 
 ### During Implementation
 - [ ] Follow existing naming conventions
+- [ ] Use relative/project paths wherever possible
 - [ ] Add type hints to all functions
 - [ ] Validate inputs at boundaries
 - [ ] Handle errors with context
@@ -285,6 +286,7 @@ tests/         # Test suite
 - [ ] Imports are correct
 - [ ] Tested with sample data
 - [ ] Edge cases considered
+- [ ] If same bug failed after 3 fix attempts, undo changes and re-analyze with expanded context before a new approach
 - [ ] Follows DRY principle
 - [ ] Documentation updated if needed
 
