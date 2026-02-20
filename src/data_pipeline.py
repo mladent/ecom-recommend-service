@@ -12,15 +12,20 @@ from collections import Counter
 from src.config import (
     PipelineConfig,
     load_config,
-    # Keep legacy globals for backward compatibility during Phase 2 transition
-    ENRICHMENT_BATCH_SIZE,
-    ENRICHMENT_FIELDS,
-    OUTLIER_OUTPUT_PATH,
-    OUTLIER_BATCH_SIZE,
-    OUTLIER_IQR_MULTIPLIER,
-    OUTLIER_FIELDS,
-    CONTEXT_MAX_CONTEXTS,
-    CONTEXT_MIN_CONFIDENCE,
+    LLM_PROVIDER,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    LLM_MAX_TOKENS,
+    LLM_TIMEOUT_SECONDS,
+    OPENAI_API_KEY,
+    AZURE_OPENAI_API_KEY,
+    AZURE_OPENAI_ENDPOINT,
+    AZURE_OPENAI_DEPLOYMENT,
+    AZURE_OPENAI_API_VERSION,
+    GEMINI_API_KEY,
+    ANTHROPIC_API_KEY,
+    PERPLEXITY_API_KEY,
+    PERPLEXITY_BASE_URL,
 )
 from src.llm_client import LLMConfig, LLMClient
 from src.utils import (
@@ -52,6 +57,7 @@ class DataPipeline:
         self.transactions = None
         self.bundles = None
         self.force_reprocess = force_reprocess
+        self._config_injected = config is not None
         
         # Load configuration
         if config is None:
@@ -69,8 +75,21 @@ class DataPipeline:
         Returns:
             Optional[str]: API key for the provider, or None if not configured
         """
-        llm_config = self.config.llm_config
         provider_lower = provider.lower()
+        if not self._config_injected:
+            if provider_lower == "openai":
+                return OPENAI_API_KEY
+            elif provider_lower == "azure":
+                return AZURE_OPENAI_API_KEY
+            elif provider_lower == "gemini":
+                return GEMINI_API_KEY
+            elif provider_lower == "anthropic":
+                return ANTHROPIC_API_KEY
+            elif provider_lower == "perplexity":
+                return PERPLEXITY_API_KEY
+            return None
+
+        llm_config = self.config.llm_config
         if provider_lower == "openai":
             return llm_config.openai_api_key
         elif provider_lower == "azure":
@@ -93,6 +112,8 @@ class DataPipeline:
             Optional[str]: Base URL for the provider, or None if not applicable
         """
         if provider.lower() == "perplexity":
+            if not self._config_injected:
+                return PERPLEXITY_BASE_URL
             return self.config.llm_config.perplexity_base_url
         return None
 
@@ -105,6 +126,25 @@ class DataPipeline:
         Returns:
             LLMConfig: Configured LLM client configuration object
         """
+        if not self._config_injected:
+            provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+            return LLMConfig(
+                provider=LLM_PROVIDER,
+                model=LLM_MODEL,
+                temperature=LLM_TEMPERATURE,
+                max_tokens=LLM_MAX_TOKENS,
+                timeout_seconds=LLM_TIMEOUT_SECONDS,
+                openai_api_key=OPENAI_API_KEY if provider == "openai" else None,
+                azure_api_key=AZURE_OPENAI_API_KEY if provider == "azure" else None,
+                azure_endpoint=AZURE_OPENAI_ENDPOINT if provider == "azure" else None,
+                azure_deployment=AZURE_OPENAI_DEPLOYMENT if provider == "azure" else None,
+                azure_api_version=AZURE_OPENAI_API_VERSION if provider == "azure" else None,
+                gemini_api_key=GEMINI_API_KEY if provider == "gemini" else None,
+                anthropic_api_key=ANTHROPIC_API_KEY if provider == "anthropic" else None,
+                perplexity_api_key=PERPLEXITY_API_KEY if provider == "perplexity" else None,
+                perplexity_base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+            )
+
         llm_config = self.config.llm_config
         provider = llm_config.provider.lower() if llm_config.provider else "openai"
         return LLMConfig(
@@ -455,7 +495,7 @@ class DataPipeline:
             logger.warning(
                 "Category enrichment enabled but provider credentials are missing; skipping enrichment"
             )
-            for field in ENRICHMENT_FIELDS:
+            for field in self.config.enrichment_fields:
                 df[field] = np.nan
             return df
 
@@ -464,7 +504,11 @@ class DataPipeline:
         unique_descriptions = df["Description"].dropna().astype(str).unique()
         enrichment_map: Dict[str, Dict[str, str]] = {}
 
-        logger.info(f"Enriching {len(unique_descriptions)} unique descriptions with {len(ENRICHMENT_FIELDS)} fields (batch_size={ENRICHMENT_BATCH_SIZE})")
+        logger.info(
+            f"Enriching {len(unique_descriptions)} unique descriptions "
+            f"with {len(self.config.enrichment_fields)} fields "
+            f"(batch_size={self.config.enrichment_batch_size})"
+        )
 
         # Separate cached and uncached descriptions
         descriptions_to_enrich = []
@@ -485,13 +529,13 @@ class DataPipeline:
             try:
                 batch_results = enrich_categories_batch_with_llm(
                     texts=descriptions_to_enrich,
-                    fields=ENRICHMENT_FIELDS,
+                    fields=self.config.enrichment_fields,
                     provider=provider,
                     model=llm_config.model,
                     temperature=llm_config.temperature,
                     max_tokens=llm_config.max_tokens,
                     timeout_seconds=llm_config.timeout_seconds,
-                    batch_size=ENRICHMENT_BATCH_SIZE,
+                    batch_size=self.config.enrichment_batch_size,
                     api_key=self._get_api_key_for_provider(provider),
                     endpoint=llm_config.azure_endpoint,
                     deployment=llm_config.azure_deployment,
@@ -514,14 +558,14 @@ class DataPipeline:
                 # Fill remaining descriptions with NaN
                 for desc in descriptions_to_enrich:
                     if desc not in enrichment_map:
-                        enrichment_map[desc] = {field: "NaN" for field in ENRICHMENT_FIELDS}
+                        enrichment_map[desc] = {field: "NaN" for field in self.config.enrichment_fields}
         elif descriptions_to_enrich:
             # LLM not available, fill with NaN
             for desc in descriptions_to_enrich:
-                enrichment_map[desc] = {field: "NaN" for field in ENRICHMENT_FIELDS}
+                enrichment_map[desc] = {field: "NaN" for field in self.config.enrichment_fields}
 
         # Add enrichment columns to dataframe
-        for field in ENRICHMENT_FIELDS:
+        for field in self.config.enrichment_fields:
             # Create a mapping function that returns None instead of "NaN" string
             def get_field_value(desc, field_name=field):
                 enrichment = enrichment_map.get(desc, {})
@@ -531,7 +575,7 @@ class DataPipeline:
             # Apply mapping and handle None values properly
             df[field] = df["Description"].apply(get_field_value)
 
-        logger.info(f"Category enrichment complete; added columns: {ENRICHMENT_FIELDS}")
+        logger.info(f"Category enrichment complete; added columns: {self.config.enrichment_fields}")
         return df
 
     def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -581,7 +625,7 @@ class DataPipeline:
             logger.info("Outlier detection disabled; skipping")
             return df
 
-        numeric_fields = [field for field in OUTLIER_FIELDS if field in df.columns]
+        numeric_fields = [field for field in self.config.outlier_fields if field in df.columns]
         if not numeric_fields:
             logger.warning("Outlier detection enabled but no numeric fields available")
             return df
@@ -590,7 +634,7 @@ class DataPipeline:
         index_reasons: Dict[int, List[str]] = {}
 
         for field in numeric_fields:
-            lower, upper = compute_iqr_bounds(df[field], OUTLIER_IQR_MULTIPLIER)
+            lower, upper = compute_iqr_bounds(df[field], self.config.outlier_iqr_multiplier)
             mask = df[field].notna() & ((df[field] < lower) | (df[field] > upper))
             for idx in df[mask].index:
                 outlier_indices.add(idx)
@@ -661,8 +705,8 @@ class DataPipeline:
             pending_keys.append(key)
 
         if llm_available and pending_records:
-            for i in range(0, len(pending_records), OUTLIER_BATCH_SIZE):
-                batch = pending_records[i : i + OUTLIER_BATCH_SIZE]
+            for i in range(0, len(pending_records), self.config.outlier_batch_size):
+                batch = pending_records[i : i + self.config.outlier_batch_size]
                 try:
                     batch_results = batch_score_anomalies_with_llm(
                         records=batch,
@@ -724,9 +768,11 @@ class DataPipeline:
 
         anomalies = df[df["check_anomaly"]]
         if len(anomalies) > 0:
-            os.makedirs(os.path.dirname(OUTLIER_OUTPUT_PATH), exist_ok=True)
-            anomalies.to_csv(OUTLIER_OUTPUT_PATH, sep="\t", encoding="utf-8", index=False)
-            logger.info(f"Saved {len(anomalies)} suspicious transactions to: {OUTLIER_OUTPUT_PATH}")
+            os.makedirs(os.path.dirname(self.config.outlier_output_path), exist_ok=True)
+            anomalies.to_csv(self.config.outlier_output_path, sep="\t", encoding="utf-8", index=False)
+            logger.info(
+                f"Saved {len(anomalies)} suspicious transactions to: {self.config.outlier_output_path}"
+            )
 
         logger.info(f"Flagged {len(anomalies)} suspicious transactions")
         return df
@@ -789,7 +835,7 @@ class DataPipeline:
                 try:
                     result = extract_contexts_with_llm(
                         text=desc,
-                        max_contexts=CONTEXT_MAX_CONTEXTS,
+                        max_contexts=self.config.context_max_contexts,
                         provider=provider,
                         model=llm_config.model,
                         temperature=llm_config.temperature,
@@ -832,7 +878,7 @@ class DataPipeline:
             filtered = [
                 ctx.get("context", "")
                 for ctx in contexts
-                if isinstance(ctx, dict) and ctx.get("confidence", 0) >= CONTEXT_MIN_CONFIDENCE
+                if isinstance(ctx, dict) and ctx.get("confidence", 0) >= self.config.context_min_confidence
             ]
             
             return ", ".join(filtered)

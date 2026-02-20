@@ -129,6 +129,29 @@ class PipelineConfig:
     outlier_enabled: bool = False
     context_enabled: bool = False
     oos_enabled: bool = False
+
+    # Category enrichment settings
+    enrichment_batch_size: int = 10
+    enrichment_fields: List[str] = field(
+        default_factory=lambda: ["category", "material", "size", "theme"]
+    )
+
+    # Outlier detection settings
+    outlier_output_path: str = "data/suspicious_transactions.tsv"
+    outlier_batch_size: int = 50
+    outlier_iqr_multiplier: float = 1.5
+    outlier_fields: List[str] = field(
+        default_factory=lambda: ["Quantity", "UnitPrice", "TransactionValue"]
+    )
+
+    # Context extraction settings
+    context_max_contexts: int = 3
+    context_min_confidence: float = 0.6
+
+    # Out-of-stock alternative settings
+    oos_inventory_path: str = "data/inventory.csv"
+    oos_max_alternatives: int = 1
+    oos_min_score: float = 0.3
     
     def __post_init__(self):
         """Validate pipeline configuration."""
@@ -140,6 +163,30 @@ class PipelineConfig:
             raise ValueError(f"train_test_split must be between 0 and 1, got {self.train_test_split}")
         if self.max_bundle_size < 2:
             raise ValueError(f"max_bundle_size must be >= 2, got {self.max_bundle_size}")
+        if self.enrichment_batch_size < 1:
+            raise ValueError(
+                f"enrichment_batch_size must be >= 1, got {self.enrichment_batch_size}"
+            )
+        if self.outlier_batch_size < 1:
+            raise ValueError(f"outlier_batch_size must be >= 1, got {self.outlier_batch_size}")
+        if self.outlier_iqr_multiplier <= 0:
+            raise ValueError(
+                f"outlier_iqr_multiplier must be > 0, got {self.outlier_iqr_multiplier}"
+            )
+        if self.context_max_contexts < 1:
+            raise ValueError(
+                f"context_max_contexts must be >= 1, got {self.context_max_contexts}"
+            )
+        if not (0.0 <= self.context_min_confidence <= 1.0):
+            raise ValueError(
+                f"context_min_confidence must be between 0.0 and 1.0, got {self.context_min_confidence}"
+            )
+        if self.oos_max_alternatives < 1:
+            raise ValueError(
+                f"oos_max_alternatives must be >= 1, got {self.oos_max_alternatives}"
+            )
+        if not (0.0 <= self.oos_min_score <= 1.0):
+            raise ValueError(f"oos_min_score must be between 0.0 and 1.0, got {self.oos_min_score}")
     
     @property
     def raw_data_path(self) -> str:
@@ -255,6 +302,38 @@ def load_config() -> tuple[PipelineConfig, EngineConfig, APIConfig, LLMConfig, C
         outlier_enabled=_env_bool("LLM_OUTLIER_ENABLED", outlier_cfg.get("enabled", False)),
         context_enabled=_env_bool("LLM_CONTEXT_ENABLED", context_cfg.get("enabled", False)),
         oos_enabled=_env_bool("LLM_OOS_ENABLED", oos_cfg.get("enabled", False)),
+        enrichment_batch_size=int(
+            os.getenv("LLM_CATEGORY_BATCH_SIZE", enrich_cfg.get("batch_size", 10))
+        ),
+        enrichment_fields=enrich_cfg.get("fields", ["category", "material", "size", "theme"]),
+        outlier_output_path=_resolve_path(
+            os.getenv(
+                "LLM_OUTLIER_OUTPUT_PATH",
+                outlier_cfg.get("output_path", "data/suspicious_transactions.tsv"),
+            )
+        ),
+        outlier_batch_size=int(
+            os.getenv("LLM_OUTLIER_BATCH_SIZE", outlier_cfg.get("batch_size", 50))
+        ),
+        outlier_iqr_multiplier=float(
+            os.getenv("LLM_OUTLIER_IQR_MULTIPLIER", outlier_cfg.get("iqr_multiplier", 1.5))
+        ),
+        outlier_fields=outlier_cfg.get("fields", ["Quantity", "UnitPrice", "TransactionValue"]),
+        context_max_contexts=int(
+            os.getenv("LLM_CONTEXT_MAX_CONTEXTS", context_cfg.get("max_contexts", 3))
+        ),
+        context_min_confidence=float(
+            os.getenv("LLM_CONTEXT_MIN_CONFIDENCE", context_cfg.get("min_confidence", 0.6))
+        ),
+        oos_inventory_path=_resolve_path(
+            os.getenv("LLM_OOS_INVENTORY_PATH", oos_cfg.get("inventory_path", "data/inventory.csv"))
+        ),
+        oos_max_alternatives=int(
+            os.getenv("LLM_OOS_MAX_ALTERNATIVES", oos_cfg.get("max_alternatives", 1))
+        ),
+        oos_min_score=float(
+            os.getenv("LLM_OOS_MIN_SCORE", oos_cfg.get("min_score", 0.3))
+        ),
     )
     
     # Build EngineConfig
