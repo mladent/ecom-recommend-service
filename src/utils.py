@@ -5,10 +5,12 @@ import logging
 import os
 import re
 import hashlib
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, cast
 from jsonschema import ValidationError, validate
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
+
+from .llm_client import LLMConfig, LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     )
 
 
-def validate_transaction(transaction: List[str]) -> bool:
+def validate_transaction(transaction: Any) -> bool:
     """
     Validate a transaction.
 
@@ -164,7 +166,7 @@ def format_recommendations(recommendations: Dict[str, Any], verbose: bool = Fals
     return "\n".join(output)
 
 
-def normalize_description_basic(text: str) -> str:
+def normalize_description_basic(text: Optional[str]) -> str:
     """Basic normalization: lowercase, strip, collapse spaces, normalize units."""
     if text is None:
         return ""
@@ -189,7 +191,7 @@ def load_json_file(path: str) -> Dict[str, Any]:
         return {}
 
 
-def save_json_file(path: str, data: Dict[str, Any]) -> None:
+def save_json_file(path: str, data: Any) -> None:
     """Save a JSON file safely."""
     if not path:
         return
@@ -219,8 +221,96 @@ def _http_post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any], 
         raise RuntimeError(f"Network error: {exc}") from exc
 
 
+def _build_llm_config(
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    timeout_seconds: int,
+    api_key: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    deployment: Optional[str] = None,
+    api_version: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> LLMConfig:
+    """
+    Build LLMConfig from provider and credentials.
+    
+    Consolidates provider-specific credential mapping for all LLM functions.
+    Maps provider name and credentials to the correct LLMConfig fields based on provider type.
+    
+    Args:
+        provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
+        model: Model identifier
+        temperature: Generation temperature (0-2 range)
+        max_tokens: Max tokens for response
+        timeout_seconds: Request timeout in seconds
+        api_key: API key for the provider
+        endpoint: API endpoint URL (required for Azure)
+        deployment: Deployment name (required for Azure)
+        api_version: API version (required for Azure)
+        base_url: Base URL for API (OpenAI, Perplexity)
+    
+    Returns:
+        LLMConfig instance with provider-specific credentials assigned
+        
+    Raises:
+        ValueError: If provider is not supported
+    """
+    provider_lower = provider.lower()
+    if provider_lower not in {"openai", "azure", "gemini", "anthropic", "perplexity"}:
+        raise ValueError(
+            f"Unsupported provider: {provider}. "
+            f"Must be one of: openai, azure, gemini, anthropic, perplexity"
+        )
+    
+    return LLMConfig(
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        openai_api_key=api_key if provider_lower == "openai" else None,
+        azure_api_key=api_key if provider_lower == "azure" else None,
+        azure_endpoint=endpoint if provider_lower == "azure" else None,
+        azure_deployment=deployment if provider_lower == "azure" else None,
+        azure_api_version=api_version if provider_lower == "azure" else None,
+        gemini_api_key=api_key if provider_lower == "gemini" else None,
+        anthropic_api_key=api_key if provider_lower == "anthropic" else None,
+        perplexity_api_key=api_key if provider_lower == "perplexity" else None,
+        perplexity_base_url=base_url if provider_lower == "perplexity" else None,
+        openai_base_url=base_url if provider_lower == "openai" else None,
+    )
+
+
+def _handle_llm_quota_error(exc: Exception) -> bool:
+    """
+    Detect if exception indicates LLM quota exceeded or rate limited.
+    
+    Checks for common quota-related keywords and phrases across all LLM providers.
+    Used to distinguish quota errors (which should be propagated as LLMQuotaExceededError)
+    from other transient or permanent errors.
+    
+    Args:
+        exc: Exception to check
+        
+    Returns:
+        True if exception message indicates quota/rate limit exceeded, False otherwise
+    """
+    message = str(exc).lower()
+    quota_keywords = {
+        "insufficient_quota",
+        "quota",
+        "rate_limit",
+        "too_many_requests",
+        "429",
+        "exceeded",
+    }
+    return any(keyword in message for keyword in quota_keywords)
+
+
 def normalize_description_with_llm(
-    text: str,
+    text: Optional[str],
     provider: str,
     model: str,
     temperature: float,
@@ -233,112 +323,49 @@ def normalize_description_with_llm(
     base_url: Optional[str] = None,
 ) -> str:
     """
-    Normalize a product description with an LLM provider. Falls back to input on failure.
+    Normalize a product description with an LLM provider.
+    
+    Falls back to original text on failure or when LLM is unavailable.
+    
+    Args:
+        text: Product description to normalize
+        provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
+        model: Model identifier
+        temperature: Generation temperature
+        max_tokens: Max tokens for response
+        timeout_seconds: Request timeout
+        api_key: API key for the provider
+        endpoint: API endpoint (Azure)
+        deployment: Deployment name (Azure)
+        api_version: API version (Azure)
+        base_url: Base URL (OpenAI, Perplexity)
+    
+    Returns:
+        Normalized product description, or original text if LLM call fails
     """
     if not text:
         return ""
 
-    prompt = _render_prompt("normalize_description_user.md", text=text)
-    system_prompt = _load_prompt_template("normalize_description_system.md")
-
     try:
-        provider = (provider or "").lower()
-        if provider == "openai":
-            if not api_key:
-                raise RuntimeError("OPENAI_API_KEY missing")
-            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            return data["choices"][0]["message"]["content"].strip()
-
-        if provider == "azure":
-            if not api_key or not endpoint or not deployment:
-                raise RuntimeError("Azure OpenAI credentials or endpoint missing")
-            api_version = api_version or "2024-06-01"
-            url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
-            headers = {"api-key": api_key, "Content-Type": "application/json"}
-            payload = {
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            return data["choices"][0]["message"]["content"].strip()
-
-        if provider == "gemini":
-            if not api_key:
-                raise RuntimeError("GEMINI_API_KEY missing")
-            url = (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model}:generateContent?key={api_key}"
-            )
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-        if provider == "anthropic":
-            if not api_key:
-                raise RuntimeError("ANTHROPIC_API_KEY missing")
-            url = "https://api.anthropic.com/v1/messages"
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            return data["content"][0]["text"].strip()
-
-        if provider == "perplexity":
-            if not api_key:
-                raise RuntimeError("PERPLEXITY_API_KEY missing")
-            base_url = base_url or "https://api.perplexity.ai"
-            url = base_url.rstrip("/") + "/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            return data["choices"][0]["message"]["content"].strip()
-
-        raise RuntimeError(f"Unsupported LLM provider: {provider}")
+        system_prompt = _load_prompt_template("normalize_description_system.md")
+        prompt = _render_prompt("normalize_description_user.md", text=text)
+        
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
+        client = LLMClient(config)
+        return client.chat_completion(system_prompt=system_prompt, user_prompt=prompt).strip()
+        
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM normalization failed ({provider}): {exc}")
         return text
 
 
 def enrich_categories_with_llm(
-    text: str,
+    text: Optional[str],
     fields: List[str],
     provider: str,
     model: str,
@@ -357,7 +384,7 @@ def enrich_categories_with_llm(
     Args:
         text: Product description to enrich
         fields: List of fields to extract (e.g., ['category', 'material', 'size', 'theme'])
-        provider: LLM provider name
+        provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
         model: Model identifier
         temperature: Generation temperature
         max_tokens: Max tokens for response
@@ -374,130 +401,26 @@ def enrich_categories_with_llm(
     if not text:
         return {field: "NaN" for field in fields}
 
-    # Build prompt requesting JSON output
-    fields_str = ", ".join(fields)
-    prompt = _render_prompt("enrich_categories_user.md", fields=fields_str, text=text)
-    system_prompt = _load_prompt_template("enrich_categories_system.md")
-
     try:
-        provider = (provider or "").lower()
-        response_text = ""
+        system_prompt = _load_prompt_template("enrich_categories_system.md")
+        fields_str = ", ".join(fields)
+        prompt = _render_prompt("enrich_categories_user.md", fields=fields_str, text=text)
         
-        if provider == "openai":
-            if not api_key:
-                raise RuntimeError("OPENAI_API_KEY missing")
-            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        elif provider == "azure":
-            if not api_key or not endpoint or not deployment:
-                raise RuntimeError("Azure OpenAI credentials or endpoint missing")
-            api_version = api_version or "2024-06-01"
-            url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
-            headers = {"api-key": api_key, "Content-Type": "application/json"}
-            payload = {
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        elif provider == "gemini":
-            if not api_key:
-                raise RuntimeError("GEMINI_API_KEY missing")
-            url = (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model}:generateContent?key={api_key}"
-            )
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-        elif provider == "anthropic":
-            if not api_key:
-                raise RuntimeError("ANTHROPIC_API_KEY missing")
-            url = "https://api.anthropic.com/v1/messages"
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["content"][0]["text"].strip()
-
-        elif provider == "perplexity":
-            if not api_key:
-                raise RuntimeError("PERPLEXITY_API_KEY missing")
-            base_url = base_url or "https://api.perplexity.ai"
-            url = base_url.rstrip("/") + "/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        else:
-            raise RuntimeError(f"Unsupported LLM provider: {provider}")
-
-        # Parse JSON from response
-        # Some models may wrap JSON in markdown code blocks
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
+        client = LLMClient(config)
+        result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
         
-        result = json.loads(response_text)
         _validate_json_schema(result, "llm_enrich_categories.json", "category enrichment")
+        return {field: result.get(field, "NaN") for field in fields}
         
-        # Ensure all requested fields are present
-        enriched = {}
-        for field in fields:
-            enriched[field] = result.get(field, "NaN")
-        
-        return enriched
-
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM category enrichment failed ({provider}): {exc}")
         return {field: "NaN" for field in fields}
-
-
-def compute_iqr_bounds(series, multiplier: float = 1.5) -> Tuple[float, float]:
-    """Compute IQR-based lower and upper bounds for a numeric series."""
 
 
 def enrich_categories_batch_with_llm(
@@ -620,138 +543,61 @@ def batch_score_anomalies_with_llm(
 ) -> Dict[str, Dict[str, str]]:
     """
     Batch score anomalies using an LLM.
+    
+    Args:
+        records: List of transaction records to score
+        provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
+        model: Model identifier
+        temperature: Generation temperature
+        max_tokens: Max tokens for response
+        timeout_seconds: Request timeout
+        api_key: API key for the provider
+        endpoint: API endpoint (Azure)
+        deployment: Deployment name (Azure)
+        api_version: API version (Azure)
+        base_url: Base URL (OpenAI, Perplexity)
 
-    Returns a mapping of record key -> {"anomaly_type": str, "anomaly_reason": str}
+    Returns:
+        Dict mapping record key -> {"anomaly_type": str, "anomaly_reason": str}
     """
     if not records:
         return {}
 
-    prompt = _render_prompt(
-        "batch_score_anomalies_user.md",
-        records_json=json.dumps(records, ensure_ascii=False),
-    )
-    system_prompt = _load_prompt_template("batch_score_anomalies_system.md")
-
     try:
-        provider = (provider or "").lower()
-        response_text = ""
-
-        if provider == "openai":
-            if not api_key:
-                raise RuntimeError("OPENAI_API_KEY missing")
-            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        elif provider == "azure":
-            if not api_key or not endpoint or not deployment:
-                raise RuntimeError("Azure OpenAI credentials or endpoint missing")
-            api_version = api_version or "2024-06-01"
-            url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
-            headers = {"api-key": api_key, "Content-Type": "application/json"}
-            payload = {
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        elif provider == "gemini":
-            if not api_key:
-                raise RuntimeError("GEMINI_API_KEY missing")
-            url = (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model}:generateContent?key={api_key}"
-            )
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-        elif provider == "anthropic":
-            if not api_key:
-                raise RuntimeError("ANTHROPIC_API_KEY missing")
-            url = "https://api.anthropic.com/v1/messages"
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["content"][0]["text"].strip()
-
-        elif provider == "perplexity":
-            if not api_key:
-                raise RuntimeError("PERPLEXITY_API_KEY missing")
-            base_url = base_url or "https://api.perplexity.ai"
-            url = base_url.rstrip("/") + "/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        else:
-            raise RuntimeError(f"Unsupported LLM provider: {provider}")
-
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-
-        parsed = json.loads(response_text)
+        system_prompt = _load_prompt_template("batch_score_anomalies_system.md")
+        prompt = _render_prompt(
+            "batch_score_anomalies_user.md",
+            records_json=json.dumps(records, ensure_ascii=False),
+        )
+        
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
+        client = LLMClient(config)
+        parsed: List[Dict[str, Any]] = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)  # type: ignore[assignment]
+        
         _validate_json_schema(parsed, "llm_batch_score_anomalies.json", "anomaly scoring")
+        
         result: Dict[str, Dict[str, str]] = {}
         for item in parsed:
             key = str(item.get("key", ""))
-            if not key:
-                continue
-            result[key] = {
-                "anomaly_type": str(item.get("anomaly_type", "none")),
-                "anomaly_reason": str(item.get("anomaly_reason", "")),
-            }
+            if key:
+                result[key] = {
+                    "anomaly_type": str(item.get("anomaly_type", "none")),
+                    "anomaly_reason": str(item.get("anomaly_reason", "")),
+                }
         return result
-
+        
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM anomaly scoring failed ({provider}): {exc}")
         return {}
 
 
 def extract_contexts_with_llm(
-    text: str,
+    text: Optional[str],
     max_contexts: int,
     provider: str,
     model: str,
@@ -770,7 +616,7 @@ def extract_contexts_with_llm(
     Args:
         text: Product description to extract contexts from
         max_contexts: Maximum number of contexts to extract
-        provider: LLM provider name
+        provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
         model: Model identifier
         temperature: Generation temperature
         max_tokens: Max tokens for response
@@ -787,122 +633,25 @@ def extract_contexts_with_llm(
     if not text:
         return {"contexts": []}
 
-    # Build prompt requesting JSON output
-    prompt = _render_prompt("extract_contexts_user.md", max_contexts=max_contexts, text=text)
-    system_prompt = _load_prompt_template("extract_contexts_system.md")
-
     try:
-        provider = (provider or "").lower()
-        response_text = ""
+        system_prompt = _load_prompt_template("extract_contexts_system.md")
+        prompt = _render_prompt("extract_contexts_user.md", max_contexts=max_contexts, text=text)
         
-        if provider == "openai":
-            if not api_key:
-                raise RuntimeError("OPENAI_API_KEY missing")
-            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        elif provider == "azure":
-            if not api_key or not endpoint or not deployment:
-                raise RuntimeError("Azure OpenAI credentials or endpoint missing")
-            api_version = api_version or "2024-06-01"
-            url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
-            headers = {"api-key": api_key, "Content-Type": "application/json"}
-            payload = {
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        elif provider == "gemini":
-            if not api_key:
-                raise RuntimeError("GEMINI_API_KEY missing")
-            url = (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model}:generateContent?key={api_key}"
-            )
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-        elif provider == "anthropic":
-            if not api_key:
-                raise RuntimeError("ANTHROPIC_API_KEY missing")
-            url = "https://api.anthropic.com/v1/messages"
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["content"][0]["text"].strip()
-
-        elif provider == "perplexity":
-            if not api_key:
-                raise RuntimeError("PERPLEXITY_API_KEY missing")
-            base_url = base_url or "https://api.perplexity.ai"
-            url = base_url.rstrip("/") + "/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        else:
-            raise RuntimeError(f"Unsupported LLM provider: {provider}")
-
-        # Parse JSON from response
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
+        client = LLMClient(config)
+        result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
         
-        result = json.loads(response_text)
         _validate_json_schema(result, "llm_extract_contexts.json", "context extraction")
         
-        # Ensure result has contexts array
         contexts = result.get("contexts", [])
-        if not isinstance(contexts, list):
-            contexts = []
+        return {"contexts": contexts if isinstance(contexts, list) else []}
         
-        return {"contexts": contexts}
-
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM context extraction failed ({provider}): {exc}")
         return {"contexts": []}
 
@@ -972,128 +721,59 @@ def select_alternatives_with_llm(
 ) -> List[Dict[str, Any]]:
     """
     Use LLM to select alternatives for an out-of-stock item from candidates.
-    Returns list of {item, score, reason}.
+    
+    Args:
+        missing_item: Out-of-stock product description
+        candidates: List of available alternative products
+        provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
+        model: Model identifier
+        temperature: Generation temperature
+        max_tokens: Max tokens for response
+        timeout_seconds: Request timeout
+        max_alternatives: Maximum number of alternatives to return
+        api_key: API key for the provider
+        endpoint: API endpoint (Azure)
+        deployment: Deployment name (Azure)
+        api_version: API version (Azure)
+        base_url: Base URL (OpenAI, Perplexity)
+    
+    Returns:
+        List of {item, score, reason} dictionaries for recommended alternatives
     """
     if not missing_item or not candidates:
         return []
 
-    prompt = _render_prompt(
-        "select_alternatives_user.md",
-        missing_item=missing_item,
-        candidates_json=json.dumps(candidates[:200]),
-    )
-    system_prompt = _load_prompt_template("select_alternatives_system.md")
-
     try:
-        provider = (provider or "").lower()
-        response_text = ""
-
-        if provider == "openai":
-            if not api_key:
-                raise RuntimeError("OPENAI_API_KEY missing")
-            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        elif provider == "azure":
-            if not api_key or not endpoint or not deployment:
-                raise RuntimeError("Azure OpenAI credentials or endpoint missing")
-            api_version = api_version or "2024-06-01"
-            url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
-            headers = {"api-key": api_key, "Content-Type": "application/json"}
-            payload = {
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        elif provider == "gemini":
-            if not api_key:
-                raise RuntimeError("GEMINI_API_KEY missing")
-            url = (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model}:generateContent?key={api_key}"
-            )
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-        elif provider == "anthropic":
-            if not api_key:
-                raise RuntimeError("ANTHROPIC_API_KEY missing")
-            url = "https://api.anthropic.com/v1/messages"
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["content"][0]["text"].strip()
-
-        elif provider == "perplexity":
-            if not api_key:
-                raise RuntimeError("PERPLEXITY_API_KEY missing")
-            base_url = base_url or "https://api.perplexity.ai"
-            url = base_url.rstrip("/") + "/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            data = _http_post_json(url, headers, payload, timeout_seconds)
-            response_text = data["choices"][0]["message"]["content"].strip()
-
-        else:
-            raise RuntimeError(f"Unsupported LLM provider: {provider}")
-
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-
-        result = json.loads(response_text)
+        system_prompt = _load_prompt_template("select_alternatives_system.md")
+        prompt = _render_prompt(
+            "select_alternatives_user.md",
+            missing_item=missing_item,
+            candidates_json=json.dumps(candidates[:200]),
+        )
+        
+        config = _build_llm_config(
+            provider, model, temperature, max_tokens, timeout_seconds,
+            api_key, endpoint, deployment, api_version, base_url
+        )
+        client = LLMClient(config)
+        result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
+        
+        # Handle both array and object responses
         if isinstance(result, list):
             result = {"alternatives": result}
+        
         _validate_json_schema(result, "llm_select_alternatives.json", "alternative selection")
+        
+        # Safely extract and validate alternatives
         alternatives = result.get("alternatives", [])
         if not isinstance(alternatives, list):
             return []
-        return alternatives[:max_alternatives]
-
+        
+        return cast(List[Dict[str, Any]], alternatives)[:max_alternatives]
+        
     except Exception as exc:
-        message = str(exc)
-        if "insufficient_quota" in message.lower() or "quota" in message.lower() and "exceeded" in message.lower():
-            raise LLMQuotaExceededError(message) from exc
+        if _handle_llm_quota_error(exc):
+            raise LLMQuotaExceededError(str(exc)) from exc
         logger.warning(f"LLM alternative selection failed ({provider}): {exc}")
         return []
 

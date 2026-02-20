@@ -11,6 +11,7 @@ from unittest.mock import patch, MagicMock, mock_open
 from tempfile import TemporaryDirectory
 
 from src.data_pipeline import DataPipeline
+from src.llm_client import LLMClient
 from src.utils import LLMQuotaExceededError
 
 
@@ -180,6 +181,44 @@ def mock_llm_functions(monkeypatch):
         'enrich': mock_enrich_batch,
         'score_anomalies': mock_score_anomalies,
         'extract_contexts': mock_extract_contexts
+    }
+
+
+@pytest.fixture
+def mock_llm_client(monkeypatch):
+    """Mock LLMClient methods to return deterministic LLM outputs."""
+
+    def mock_validate_credentials(self):
+        return any(
+            os.getenv(key)
+            for key in (
+                "OPENAI_API_KEY",
+                "AZURE_OPENAI_API_KEY",
+                "GEMINI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "PERPLEXITY_API_KEY",
+            )
+        )
+
+    def mock_chat_completion_json(self, system_prompt, user_prompt):
+        content = f"{system_prompt} {user_prompt}".lower()
+        if "anomaly" in content:
+            return [{"key": "mock", "anomaly_type": "none", "anomaly_reason": "normal"}]
+        if "context" in content:
+            return {"contexts": [{"context": "mock context", "confidence": 0.9}]}
+        return {
+            "category": "test_category",
+            "material": "test_material",
+            "size": "M",
+            "theme": "test_theme",
+        }
+
+    monkeypatch.setattr(LLMClient, "validate_credentials", mock_validate_credentials)
+    monkeypatch.setattr(LLMClient, "chat_completion_json", mock_chat_completion_json)
+
+    return {
+        "validate_credentials": mock_validate_credentials,
+        "chat_completion_json": mock_chat_completion_json,
     }
 
 
@@ -572,7 +611,7 @@ class TestBundleGeneration:
 class TestLLMFeatures:
     """Test LLM-dependent features with mocking."""
     
-    def test_enrich_categories_cache_first(self, minimal_dataframe, mock_llm_functions, monkeypatch):
+    def test_enrich_categories_cache_first(self, minimal_dataframe, mock_llm_client, monkeypatch):
         """Test category enrichment uses cache-first pattern."""
         monkeypatch.setenv('ENRICHMENT_ENABLED', 'true')
         monkeypatch.setenv('ENRICHMENT_CACHE_FIRST', 'true')
@@ -586,7 +625,7 @@ class TestLLMFeatures:
         # Should complete without LLM errors
         assert result is not None
     
-    def test_enrich_categories_no_credentials(self, minimal_dataframe, monkeypatch):
+    def test_enrich_categories_no_credentials(self, minimal_dataframe, mock_llm_client, monkeypatch):
         """Test graceful handling when LLM credentials missing."""
         monkeypatch.setenv('ENRICHMENT_ENABLED', 'true')
         monkeypatch.setenv('OPENAI_API_KEY', '')
@@ -598,7 +637,7 @@ class TestLLMFeatures:
         result = pipeline.preprocess()
         assert result is not None
     
-    def test_flag_anomalies_iqr_detection(self, minimal_dataframe, monkeypatch):
+    def test_flag_anomalies_iqr_detection(self, minimal_dataframe, mock_llm_client, monkeypatch):
         """Test IQR-based anomaly detection."""
         monkeypatch.setenv('OUTLIER_ENABLED', 'false')  # Use heuristic only
         
@@ -611,7 +650,7 @@ class TestLLMFeatures:
         if 'check_anomaly' in result.columns:
             assert isinstance(result['check_anomaly'].iloc[0], (bool, np.bool_))
     
-    def test_extract_contexts_mocked(self, minimal_dataframe, mock_llm_functions, monkeypatch):
+    def test_extract_contexts_mocked(self, minimal_dataframe, mock_llm_client, monkeypatch):
         """Test context extraction with mock."""
         monkeypatch.setenv('CONTEXT_ENABLED', 'true')
         
@@ -622,6 +661,54 @@ class TestLLMFeatures:
         
         # Should complete without errors
         assert result is not None
+
+
+# ==========================================================================
+# TEST CLASS: Pipeline Helper Methods
+# ==========================================================================
+
+class TestPipelineHelpers:
+    """Test helper methods used by pipeline LLM integration."""
+
+    def test_get_api_key_for_provider(self, monkeypatch):
+        """Verify API key mapping for each provider."""
+        monkeypatch.setattr('src.data_pipeline.OPENAI_API_KEY', 'openai-key')
+        monkeypatch.setattr('src.data_pipeline.AZURE_OPENAI_API_KEY', 'azure-key')
+        monkeypatch.setattr('src.data_pipeline.GEMINI_API_KEY', 'gemini-key')
+        monkeypatch.setattr('src.data_pipeline.ANTHROPIC_API_KEY', 'anthropic-key')
+        monkeypatch.setattr('src.data_pipeline.PERPLEXITY_API_KEY', 'perplexity-key')
+
+        pipeline = DataPipeline()
+
+        assert pipeline._get_api_key_for_provider('openai') == 'openai-key'
+        assert pipeline._get_api_key_for_provider('azure') == 'azure-key'
+        assert pipeline._get_api_key_for_provider('gemini') == 'gemini-key'
+        assert pipeline._get_api_key_for_provider('anthropic') == 'anthropic-key'
+        assert pipeline._get_api_key_for_provider('perplexity') == 'perplexity-key'
+
+    def test_build_pipeline_llm_config(self, monkeypatch):
+        """Verify LLM config creation uses provider-specific credentials."""
+        monkeypatch.setattr('src.data_pipeline.LLM_PROVIDER', 'openai')
+        monkeypatch.setattr('src.data_pipeline.LLM_MODEL', 'test-model')
+        monkeypatch.setattr('src.data_pipeline.LLM_TEMPERATURE', 0.1)
+        monkeypatch.setattr('src.data_pipeline.LLM_MAX_TOKENS', 123)
+        monkeypatch.setattr('src.data_pipeline.LLM_TIMEOUT_SECONDS', 7)
+        monkeypatch.setattr('src.data_pipeline.OPENAI_API_KEY', 'openai-key')
+        monkeypatch.setattr('src.data_pipeline.AZURE_OPENAI_API_KEY', 'azure-key')
+
+        pipeline = DataPipeline()
+        config = pipeline._build_pipeline_llm_config()
+
+        assert config.provider == 'openai'
+        assert config.model == 'test-model'
+        assert config.openai_api_key == 'openai-key'
+        assert config.azure_api_key is None
+
+    def test_handle_llm_quota_error_standardized(self):
+        """Verify standardized quota handling raises LLMQuotaExceededError."""
+        pipeline = DataPipeline()
+        with pytest.raises(LLMQuotaExceededError, match='quota'):
+            pipeline._handle_llm_quota_error_standardized(Exception('quota'), 'skip_batch')
 
 
 # ============================================================================
@@ -758,9 +845,9 @@ class TestSerialization:
         pipeline2 = DataPipeline()
         result = pipeline2.load_processed_data(pickle_path)
         
-        assert result is not None
-        assert len(result) == 3
+        assert result is True
         assert pipeline2.processed_data is not None
+        assert len(pipeline2.processed_data) == 3
     
     def test_load_processed_data_file_not_found(self):
         """Test FileNotFoundError for missing pickle."""
@@ -776,7 +863,7 @@ class TestSerialization:
 class TestFullPipeline:
     """Test end-to-end workflows."""
     
-    def test_pipeline_load_to_baskets(self, realistic_sample_dataframe, temp_data_directory, mock_llm_functions, monkeypatch):
+    def test_pipeline_load_to_baskets(self, realistic_sample_dataframe, temp_data_directory, mock_llm_client, monkeypatch):
         """Full pipeline: load → preprocess → create baskets."""
         # Disable LLM to speed up test
         monkeypatch.setenv('ENRICHMENT_ENABLED', 'false')

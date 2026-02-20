@@ -172,18 +172,32 @@ def main():
         sample_size = max(25, len(transactions) // 200)  # Use 0.5% or minimum 25
         sampled_indices = random.sample(range(len(transactions)), min(sample_size, len(transactions)))
         transactions = transactions.iloc[sampled_indices].reset_index(drop=True)
+        # Update pipeline's internal transactions so bundle generation uses the sample
+        pipeline.transactions = transactions
         logger.info(f"Sampled {len(transactions)} transactions for quick demo")
 
     # Now generate bundles on sampled data (much faster)
     bundles = pipeline.generate_product_bundles() if not quick_mode else pipeline.generate_product_bundles(max_size=2)
 
     if bundles is None:
-        logger.error("Failed to generate bundles")
+        logger.error("Failed to generate bundles. Consider lowering MIN_SUPPORT and MIN_CONFIDENCE in .env file.")
         return
 
     # Convert to required format
     transaction_items = [list(items) for items in transactions["Items"].values]
     bundle_list = [tuple(b) for b in bundles]
+
+    if not bundle_list:
+        error_msg = (
+            f"No bundles found (sampled {len(transaction_items)} transactions). "
+            "To generate bundles with smaller datasets:\n"
+            "  1. Edit .env file\n"
+            "  2. Lower MIN_SUPPORT (try 0.000298) and MIN_CONFIDENCE (try 0.07)\n"
+            "  3. See .env-template comments for recommended values\n"
+            "  4. Run again without --quick flag for full dataset, or adjust --quick sampling"
+        )
+        logger.error(error_msg)
+        return
 
     logger.info(f"Loaded {len(transaction_items)} transactions and {len(bundle_list)} bundles")
 

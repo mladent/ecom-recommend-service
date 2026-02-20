@@ -1612,7 +1612,7 @@ class TestHttpPostJson:
             "https://api.example.com",
             401,
             "Unauthorized",
-            {},
+            None,  # type: ignore[arg-type]
             None
         )
         
@@ -1731,15 +1731,11 @@ class TestNormalizeDescriptionWithLLM:
         )
         assert result == ""
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_openai_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_openai_success(self, mock_chat):
         """Test successful OpenAI normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": "normalized description"}}
-            ]
-        }
+        mock_chat.return_value = "normalized description"
         
         result = normalize_description_with_llm(
             "messy description",
@@ -1753,15 +1749,11 @@ class TestNormalizeDescriptionWithLLM:
         
         assert result == "normalized description"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_azure_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_azure_success(self, mock_chat):
         """Test successful Azure normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": "normalized"}}
-            ]
-        }
+        mock_chat.return_value = "normalized"
         
         result = normalize_description_with_llm(
             "test",
@@ -1777,15 +1769,11 @@ class TestNormalizeDescriptionWithLLM:
         
         assert result == "normalized"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_gemini_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_gemini_success(self, mock_chat):
         """Test successful Gemini normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "candidates": [
-                {"content": {"parts": [{"text": "normalized"}]}}
-            ]
-        }
+        mock_chat.return_value = "normalized"
         
         result = normalize_description_with_llm(
             "test",
@@ -1799,13 +1787,11 @@ class TestNormalizeDescriptionWithLLM:
         
         assert result == "normalized"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_anthropic_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_anthropic_success(self, mock_chat):
         """Test successful Anthropic normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "content": [{"text": "normalized"}]
-        }
+        mock_chat.return_value = "normalized"
         
         result = normalize_description_with_llm(
             "test",
@@ -1819,15 +1805,11 @@ class TestNormalizeDescriptionWithLLM:
         
         assert result == "normalized"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_perplexity_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_perplexity_success(self, mock_chat):
         """Test successful Perplexity normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": "normalized"}}
-            ]
-        }
+        mock_chat.return_value = "normalized"
         
         result = normalize_description_with_llm(
             "test",
@@ -1870,11 +1852,11 @@ class TestNormalizeDescriptionWithLLM:
         )
         assert result == "test description"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_quota_exceeded(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_quota_exceeded(self, mock_chat):
         """Test handling of quota exceeded error."""
         from src.utils import normalize_description_with_llm
-        mock_post.side_effect = RuntimeError("insufficient_quota")
+        mock_chat.side_effect = RuntimeError("insufficient_quota")
         
         with pytest.raises(LLMQuotaExceededError):
             normalize_description_with_llm(
@@ -1887,11 +1869,11 @@ class TestNormalizeDescriptionWithLLM:
                 api_key="test-key"
             )
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_generic_error_fallback(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_generic_error_fallback(self, mock_chat):
         """Test fallback to original text on generic error."""
         from src.utils import normalize_description_with_llm
-        mock_post.side_effect = RuntimeError("API error")
+        mock_chat.side_effect = RuntimeError("API error")
         
         result = normalize_description_with_llm(
             "original text",
@@ -1970,15 +1952,11 @@ class TestSelectAlternativesWithLLM:
         )
         assert result == []
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_openai_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_openai_success(self, mock_chat):
         """Test successful OpenAI alternative selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.95, "reason": "similar"}]}'}}
-            ]
-        }
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.95, "reason": "similar"}]}
         
         result = select_alternatives_with_llm(
             "missing",
@@ -1996,22 +1974,11 @@ class TestSelectAlternativesWithLLM:
         assert result[0]["item"] == "alt1"
         assert result[0]["score"] == 0.95
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_with_markdown_fence(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_with_markdown_fence(self, mock_chat):
         """Test parsing response with markdown code fence."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": '''Here are alternatives:
-```json
-[{"item": "alt1", "score": 0.9, "reason": "best match"}]
-```'''
-                    }
-                }
-            ]
-        }
+        mock_chat.return_value = [{"item": "alt1", "score": 0.9, "reason": "best match"}]
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2028,24 +1995,16 @@ class TestSelectAlternativesWithLLM:
         assert len(result) == 1
         assert result[0]["item"] == "alt1"
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_max_alternatives_limit(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_max_alternatives_limit(self, mock_chat):
         """Test that results are limited by max_alternatives."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps({
-                            "alternatives": [
-                                {"item": "alt1", "score": 0.9, "reason": "1"},
-                                {"item": "alt2", "score": 0.8, "reason": "2"},
-                                {"item": "alt3", "score": 0.7, "reason": "3"},
-                                {"item": "alt4", "score": 0.6, "reason": "4"},
-                            ]
-                        })
-                    }
-                }
+        mock_chat.return_value = {
+            "alternatives": [
+                {"item": "alt1", "score": 0.9, "reason": "1"},
+                {"item": "alt2", "score": 0.8, "reason": "2"},
+                {"item": "alt3", "score": 0.7, "reason": "3"},
+                {"item": "alt4", "score": 0.6, "reason": "4"},
             ]
         }
         
@@ -2063,21 +2022,13 @@ class TestSelectAlternativesWithLLM:
         
         assert len(result) == 2
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_raw_list_response(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_raw_list_response(self, mock_chat):
         """Test parsing when response is raw list (not wrapped dict)."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps([
-                            {"item": "alt1", "score": 0.9, "reason": "match"}
-                        ])
-                    }
-                }
-            ]
-        }
+        mock_chat.return_value = [
+            {"item": "alt1", "score": 0.9, "reason": "match"}
+        ]
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2093,15 +2044,11 @@ class TestSelectAlternativesWithLLM:
         
         assert len(result) == 1
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_azure_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_azure_success(self, mock_chat):
         """Test successful Azure alternative selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}}
-            ]
-        }
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2119,15 +2066,11 @@ class TestSelectAlternativesWithLLM:
         
         assert len(result) == 1
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_gemini_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_gemini_success(self, mock_chat):
         """Test successful Gemini alternative selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "candidates": [
-                {"content": {"parts": [{"text": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}]}}
-            ]
-        }
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2143,15 +2086,11 @@ class TestSelectAlternativesWithLLM:
         
         assert len(result) == 1
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_anthropic_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_anthropic_success(self, mock_chat):
         """Test successful Anthropic alternative selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "content": [
-                {"text": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}
-            ]
-        }
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2167,15 +2106,11 @@ class TestSelectAlternativesWithLLM:
         
         assert len(result) == 1
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_perplexity_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_perplexity_success(self, mock_chat):
         """Test successful Perplexity alternative selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}}
-            ]
-        }
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2191,15 +2126,11 @@ class TestSelectAlternativesWithLLM:
         
         assert len(result) == 1
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_invalid_json(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_invalid_json(self, mock_chat):
         """Test fallback on invalid JSON response."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": "invalid json content"}}
-            ]
-        }
+        mock_chat.return_value = "invalid json content"
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2215,15 +2146,11 @@ class TestSelectAlternativesWithLLM:
         
         assert result == []
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_invalid_schema(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_invalid_schema(self, mock_chat):
         """Test fallback on schema validation failure."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"invalid": "structure"}'}}
-            ]
-        }
+        mock_chat.return_value = '{"invalid": "structure"}'
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2239,15 +2166,11 @@ class TestSelectAlternativesWithLLM:
         
         assert result == []
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_non_list_alternatives(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_non_list_alternatives(self, mock_chat):
         """Test fallback when alternatives field is not a list."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"alternatives": "not a list"}'}}
-            ]
-        }
+        mock_chat.return_value = {"alternatives": "not a list"}
         
         result = select_alternatives_with_llm(
             "missing",
@@ -2263,11 +2186,11 @@ class TestSelectAlternativesWithLLM:
         
         assert result == []
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_quota_exceeded(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_quota_exceeded(self, mock_chat):
         """Test handling of quota exceeded during selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.side_effect = RuntimeError("quota exceeded")
+        mock_chat.side_effect = RuntimeError("quota exceeded")
         
         with pytest.raises(LLMQuotaExceededError):
             select_alternatives_with_llm(
@@ -2282,11 +2205,11 @@ class TestSelectAlternativesWithLLM:
                 api_key="test-key"
             )
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_generic_error_fallback(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_generic_error_fallback(self, mock_chat):
         """Test fallback to empty list on generic error."""
         from src.utils import select_alternatives_with_llm
-        mock_post.side_effect = RuntimeError("API error")
+        mock_chat.side_effect = RuntimeError("API error")
         
         result = select_alternatives_with_llm(
             "missing",
