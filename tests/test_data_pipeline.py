@@ -670,15 +670,15 @@ class TestLLMFeatures:
 class TestPipelineHelpers:
     """Test helper methods used by pipeline LLM integration."""
 
-    def test_get_api_key_for_provider(self, monkeypatch):
+    def test_get_api_key_for_provider(self, pipeline_config_llm_enabled):
         """Verify API key mapping for each provider."""
-        monkeypatch.setattr('src.data_pipeline.OPENAI_API_KEY', 'openai-key')
-        monkeypatch.setattr('src.data_pipeline.AZURE_OPENAI_API_KEY', 'azure-key')
-        monkeypatch.setattr('src.data_pipeline.GEMINI_API_KEY', 'gemini-key')
-        monkeypatch.setattr('src.data_pipeline.ANTHROPIC_API_KEY', 'anthropic-key')
-        monkeypatch.setattr('src.data_pipeline.PERPLEXITY_API_KEY', 'perplexity-key')
+        pipeline_config_llm_enabled.llm_config.openai_api_key = 'openai-key'
+        pipeline_config_llm_enabled.llm_config.azure_api_key = 'azure-key'
+        pipeline_config_llm_enabled.llm_config.gemini_api_key = 'gemini-key'
+        pipeline_config_llm_enabled.llm_config.anthropic_api_key = 'anthropic-key'
+        pipeline_config_llm_enabled.llm_config.perplexity_api_key = 'perplexity-key'
 
-        pipeline = DataPipeline()
+        pipeline = DataPipeline(config=pipeline_config_llm_enabled)
 
         assert pipeline._get_api_key_for_provider('openai') == 'openai-key'
         assert pipeline._get_api_key_for_provider('azure') == 'azure-key'
@@ -686,17 +686,17 @@ class TestPipelineHelpers:
         assert pipeline._get_api_key_for_provider('anthropic') == 'anthropic-key'
         assert pipeline._get_api_key_for_provider('perplexity') == 'perplexity-key'
 
-    def test_build_pipeline_llm_config(self, monkeypatch):
+    def test_build_pipeline_llm_config(self, pipeline_config_llm_enabled):
         """Verify LLM config creation uses provider-specific credentials."""
-        monkeypatch.setattr('src.data_pipeline.LLM_PROVIDER', 'openai')
-        monkeypatch.setattr('src.data_pipeline.LLM_MODEL', 'test-model')
-        monkeypatch.setattr('src.data_pipeline.LLM_TEMPERATURE', 0.1)
-        monkeypatch.setattr('src.data_pipeline.LLM_MAX_TOKENS', 123)
-        monkeypatch.setattr('src.data_pipeline.LLM_TIMEOUT_SECONDS', 7)
-        monkeypatch.setattr('src.data_pipeline.OPENAI_API_KEY', 'openai-key')
-        monkeypatch.setattr('src.data_pipeline.AZURE_OPENAI_API_KEY', 'azure-key')
+        pipeline_config_llm_enabled.llm_config.provider = 'openai'
+        pipeline_config_llm_enabled.llm_config.model = 'test-model'
+        pipeline_config_llm_enabled.llm_config.temperature = 0.1
+        pipeline_config_llm_enabled.llm_config.max_tokens = 123
+        pipeline_config_llm_enabled.llm_config.timeout_seconds = 7
+        pipeline_config_llm_enabled.llm_config.openai_api_key = 'openai-key'
+        pipeline_config_llm_enabled.llm_config.azure_api_key = 'azure-key'
 
-        pipeline = DataPipeline()
+        pipeline = DataPipeline(config=pipeline_config_llm_enabled)
         config = pipeline._build_pipeline_llm_config()
 
         assert config.provider == 'openai'
