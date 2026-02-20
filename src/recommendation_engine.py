@@ -22,6 +22,9 @@ from sklearn.metrics import (
 )
 
 from src.config import (
+    EngineConfig,
+    PipelineConfig,
+    load_config,
     RANDOM_STATE,
     TRAIN_TEST_SPLIT,
     N_JOBS,
@@ -549,12 +552,49 @@ class SVMBundleRecommender(BaseRecommender):
 class BundleRecommendationEngine:
     """Main bundle recommendation engine."""
 
-    def __init__(self):
-        """Initialize the recommendation engine."""
+    def __init__(
+        self,
+        engine_config: Optional[EngineConfig] = None,
+        pipeline_config: Optional[PipelineConfig] = None,
+    ):
+        """Initialize the recommendation engine.
+
+        Args:
+            engine_config: Optional typed engine configuration.
+            pipeline_config: Optional typed pipeline configuration for OOS/LLM settings.
+        """
+        if engine_config is None or pipeline_config is None:
+            loaded_pipeline, loaded_engine, _, _, _ = load_config()
+            self.engine_config = engine_config or loaded_engine
+            self.pipeline_config = pipeline_config or loaded_pipeline
+        else:
+            self.engine_config = engine_config
+            self.pipeline_config = pipeline_config
+
         self.recommenders = {}
         self.transactions = None
         self.bundles = None
         self.recommendations_cache = {}
+
+    def _get_oos_api_key_for_provider(self, provider: str) -> Optional[str]:
+        """Get API key for the configured OOS LLM provider."""
+        llm_config = self.pipeline_config.llm_config
+        provider_lower = provider.lower()
+        if provider_lower == "openai":
+            return llm_config.openai_api_key
+        if provider_lower == "azure":
+            return llm_config.azure_api_key
+        if provider_lower == "gemini":
+            return llm_config.gemini_api_key
+        if provider_lower == "anthropic":
+            return llm_config.anthropic_api_key
+        if provider_lower == "perplexity":
+            return llm_config.perplexity_api_key
+        return None
+
+    def _is_oos_enabled(self) -> bool:
+        """Resolve OOS enablement with typed config preference and legacy fallback."""
+        return self.pipeline_config.oos_enabled if self.pipeline_config is not None else OOS_ENABLED
 
     def add_recommender(self, name: str, recommender: BaseRecommender) -> None:
         """
@@ -712,8 +752,13 @@ class BundleRecommendationEngine:
             recommendations["bundles"] = applicable_bundles[:5]  # Top 5
 
         # Resolve out-of-stock items with alternatives (LLM-assisted)
-        if OOS_ENABLED and recommendations["bundles"]:
-            inventory = load_inventory_csv(OOS_INVENTORY_PATH)
+        if self._is_oos_enabled() and recommendations["bundles"]:
+            inventory_path = (
+                self.pipeline_config.oos_inventory_path
+                if self.pipeline_config is not None
+                else OOS_INVENTORY_PATH
+            )
+            inventory = load_inventory_csv(inventory_path)
             in_stock_items = set()
             for bundle in recommendations["bundles"]:
                 for item in bundle:
@@ -722,27 +767,60 @@ class BundleRecommendationEngine:
                         in_stock_items.add(item)
 
             candidates = list(in_stock_items)
-            cache = load_json_file(OOS_CACHE_PATH) if OOS_CACHE_FIRST else {}
+            cache_path = (
+                self.pipeline_config.cache_config.oos_cache_path
+                if self.pipeline_config is not None
+                else OOS_CACHE_PATH
+            )
+            cache_first = (
+                self.pipeline_config.cache_config.oos_cache_first
+                if self.pipeline_config is not None
+                else OOS_CACHE_FIRST
+            )
+            cache = load_json_file(cache_path) if cache_first else {}
             cache_updated = False
 
-            provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+            llm_config = self.pipeline_config.llm_config if self.pipeline_config is not None else None
+            provider = (
+                llm_config.provider.lower()
+                if llm_config is not None and llm_config.provider
+                else (LLM_PROVIDER.lower() if LLM_PROVIDER else "openai")
+            )
             
             # Validate LLM credentials using unified client
             config = LLMConfig(
                 provider=provider,
-                model=LLM_MODEL,
-                temperature=LLM_TEMPERATURE,
-                max_tokens=LLM_MAX_TOKENS,
-                timeout_seconds=LLM_TIMEOUT_SECONDS,
-                openai_api_key=OPENAI_API_KEY,
-                azure_api_key=AZURE_OPENAI_API_KEY,
-                azure_endpoint=AZURE_OPENAI_ENDPOINT,
-                azure_deployment=AZURE_OPENAI_DEPLOYMENT,
-                azure_api_version=AZURE_OPENAI_API_VERSION,
-                gemini_api_key=GEMINI_API_KEY,
-                anthropic_api_key=ANTHROPIC_API_KEY,
-                perplexity_api_key=PERPLEXITY_API_KEY,
-                perplexity_base_url=PERPLEXITY_BASE_URL,
+                model=llm_config.model if llm_config is not None else LLM_MODEL,
+                temperature=llm_config.temperature if llm_config is not None else LLM_TEMPERATURE,
+                max_tokens=llm_config.max_tokens if llm_config is not None else LLM_MAX_TOKENS,
+                timeout_seconds=(
+                    llm_config.timeout_seconds if llm_config is not None else LLM_TIMEOUT_SECONDS
+                ),
+                openai_api_key=(llm_config.openai_api_key if llm_config is not None else OPENAI_API_KEY),
+                azure_api_key=(
+                    llm_config.azure_api_key if llm_config is not None else AZURE_OPENAI_API_KEY
+                ),
+                azure_endpoint=(
+                    llm_config.azure_endpoint if llm_config is not None else AZURE_OPENAI_ENDPOINT
+                ),
+                azure_deployment=(
+                    llm_config.azure_deployment if llm_config is not None else AZURE_OPENAI_DEPLOYMENT
+                ),
+                azure_api_version=(
+                    llm_config.azure_api_version
+                    if llm_config is not None
+                    else AZURE_OPENAI_API_VERSION
+                ),
+                gemini_api_key=(llm_config.gemini_api_key if llm_config is not None else GEMINI_API_KEY),
+                anthropic_api_key=(
+                    llm_config.anthropic_api_key if llm_config is not None else ANTHROPIC_API_KEY
+                ),
+                perplexity_api_key=(
+                    llm_config.perplexity_api_key if llm_config is not None else PERPLEXITY_API_KEY
+                ),
+                perplexity_base_url=(
+                    llm_config.perplexity_base_url if llm_config is not None else PERPLEXITY_BASE_URL
+                ),
             )
             client = LLMClient(config)
             llm_available = client.validate_credentials()
@@ -761,34 +839,53 @@ class BundleRecommendationEngine:
 
                     cache_key = f"{normalized}|{candidate_hash}"
                     alternatives = []
-                    if OOS_CACHE_FIRST and cache_key in cache:
+                    if cache_first and cache_key in cache:
                         alternatives = cache[cache_key].get("alternatives", [])
                     elif llm_available:
                         try:
+                            max_alternatives = (
+                                self.pipeline_config.oos_max_alternatives
+                                if self.pipeline_config is not None
+                                else OOS_MAX_ALTERNATIVES
+                            )
                             alternatives = select_alternatives_with_llm(
                                 missing_item=item,
                                 candidates=candidates,
                                 provider=provider,
-                                model=LLM_MODEL,
-                                temperature=LLM_TEMPERATURE,
-                                max_tokens=LLM_MAX_TOKENS,
-                                timeout_seconds=LLM_TIMEOUT_SECONDS,
-                                max_alternatives=OOS_MAX_ALTERNATIVES,
-                                api_key=(
-                                    OPENAI_API_KEY
-                                    if provider == "openai"
-                                    else AZURE_OPENAI_API_KEY
-                                    if provider == "azure"
-                                    else GEMINI_API_KEY
-                                    if provider == "gemini"
-                                    else ANTHROPIC_API_KEY
-                                    if provider == "anthropic"
-                                    else PERPLEXITY_API_KEY
+                                model=llm_config.model if llm_config is not None else LLM_MODEL,
+                                temperature=(
+                                    llm_config.temperature if llm_config is not None else LLM_TEMPERATURE
                                 ),
-                                endpoint=AZURE_OPENAI_ENDPOINT,
-                                deployment=AZURE_OPENAI_DEPLOYMENT,
-                                api_version=AZURE_OPENAI_API_VERSION,
-                                base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                                max_tokens=(
+                                    llm_config.max_tokens if llm_config is not None else LLM_MAX_TOKENS
+                                ),
+                                timeout_seconds=(
+                                    llm_config.timeout_seconds
+                                    if llm_config is not None
+                                    else LLM_TIMEOUT_SECONDS
+                                ),
+                                max_alternatives=max_alternatives,
+                                api_key=self._get_oos_api_key_for_provider(provider),
+                                endpoint=(
+                                    llm_config.azure_endpoint
+                                    if llm_config is not None
+                                    else AZURE_OPENAI_ENDPOINT
+                                ),
+                                deployment=(
+                                    llm_config.azure_deployment
+                                    if llm_config is not None
+                                    else AZURE_OPENAI_DEPLOYMENT
+                                ),
+                                api_version=(
+                                    llm_config.azure_api_version
+                                    if llm_config is not None
+                                    else AZURE_OPENAI_API_VERSION
+                                ),
+                                base_url=(
+                                    llm_config.perplexity_base_url
+                                    if llm_config is not None and provider == "perplexity"
+                                    else (PERPLEXITY_BASE_URL if provider == "perplexity" else None)
+                                ),
                             )
                         except LLMQuotaExceededError as exc:
                             llm_available = False
@@ -804,7 +901,12 @@ class BundleRecommendationEngine:
                     if alternatives:
                         best = max(alternatives, key=lambda a: float(a.get("score", 0)))
 
-                    if best and float(best.get("score", 0)) >= OOS_MIN_SCORE:
+                    min_score = (
+                        self.pipeline_config.oos_min_score
+                        if self.pipeline_config is not None
+                        else OOS_MIN_SCORE
+                    )
+                    if best and float(best.get("score", 0)) >= min_score:
                         resolved_bundle[idx] = best.get("item")
                         bundle_subs.append(
                             {
@@ -815,7 +917,7 @@ class BundleRecommendationEngine:
                             }
                         )
 
-                    if OOS_CACHE_FIRST:
+                    if cache_first:
                         cache[cache_key] = {"alternatives": alternatives}
                         cache_updated = True
 
@@ -832,8 +934,8 @@ class BundleRecommendationEngine:
             recommendations["bundles"] = resolved_bundles
             recommendations["bundle_substitutions"] = substitutions
 
-            if OOS_CACHE_FIRST and cache_updated:
-                save_json_file(OOS_CACHE_PATH, cache)
+            if cache_first and cache_updated:
+                save_json_file(cache_path, cache)
 
         return recommendations
 
