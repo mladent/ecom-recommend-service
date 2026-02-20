@@ -27,6 +27,9 @@ class TaskSpec:
     blocked_paths: List[str]
     forbidden_regex: List[str]
     required_commands: List[str]
+    forbidden_regex_exempt_paths: Optional[List[str]] = None
+    precommit_commands: Optional[List[str]] = None
+    ci_commands: Optional[List[str]] = None
     coverage_min: Optional[float] = None
 
 
@@ -35,6 +38,15 @@ class TaskController:
 
     def __init__(self, repo_root: Optional[Path] = None):
         self.repo_root = repo_root or Path.cwd()
+
+    @staticmethod
+    def _normalize_mode(mode: str) -> str:
+        normalized = mode.strip().lower()
+        if normalized in {"pre-commit", "precommit"}:
+            return "pre-commit"
+        if normalized == "ci":
+            return "ci"
+        raise TaskViolationError(f"Unsupported controller mode: {mode}")
 
     def load_task_spec(self, task_file: Path) -> TaskSpec:
         """Load and validate a task spec file against schema."""
@@ -63,9 +75,21 @@ class TaskController:
             allowed_paths=payload["allowed_paths"],
             blocked_paths=payload["blocked_paths"],
             forbidden_regex=payload["forbidden_regex"],
+            forbidden_regex_exempt_paths=payload.get("forbidden_regex_exempt_paths"),
             required_commands=payload["required_commands"],
+            precommit_commands=payload.get("precommit_commands"),
+            ci_commands=payload.get("ci_commands"),
             coverage_min=payload.get("coverage_min"),
         )
+
+    def get_commands_for_mode(self, spec: TaskSpec, mode: str) -> List[str]:
+        """Resolve required commands for selected execution mode."""
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == "pre-commit" and spec.precommit_commands is not None:
+            return spec.precommit_commands
+        if normalized_mode == "ci" and spec.ci_commands is not None:
+            return spec.ci_commands
+        return spec.required_commands
 
     def _run_command(self, command: List[str]) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -135,6 +159,11 @@ class TaskController:
             return
 
         for rel_path in changed_files:
+            if spec.forbidden_regex_exempt_paths and self._matches_prefix(
+                rel_path, spec.forbidden_regex_exempt_paths
+            ):
+                continue
+
             file_path = self.repo_root / rel_path
             if staged:
                 content = self._read_git_blob(rel_path)
@@ -149,9 +178,9 @@ class TaskController:
                         f"Forbidden pattern '{pattern.pattern}' detected in {rel_path}"
                     )
 
-    def run_required_commands(self, spec: TaskSpec) -> None:
+    def run_required_commands(self, commands: List[str]) -> None:
         """Run required quality commands from task spec."""
-        for command in spec.required_commands:
+        for command in commands:
             result = self._run_shell(command)
             if result.returncode != 0:
                 message = result.stdout + "\n" + result.stderr
@@ -171,8 +200,15 @@ class TaskController:
             message = result.stdout + "\n" + result.stderr
             raise TaskViolationError(f"Coverage gate failed ({spec.coverage_min}%):\n{message.strip()}")
 
-    def enforce(self, task_file: Path, staged: bool = False, diff_range: Optional[str] = None) -> None:
+    def enforce(
+        self,
+        task_file: Path,
+        staged: bool = False,
+        diff_range: Optional[str] = None,
+        mode: str = "ci",
+    ) -> None:
         """Run all controller checks and raise on first violation."""
+        normalized_mode = self._normalize_mode(mode)
         spec = self.load_task_spec(task_file)
         changed_files = self.get_changed_files(staged=staged, diff_range=diff_range)
         if not changed_files:
@@ -180,5 +216,7 @@ class TaskController:
 
         self.validate_paths(changed_files, spec)
         self.validate_forbidden_patterns(changed_files, spec, staged=staged)
-        self.run_required_commands(spec)
-        self.run_coverage_gate(spec)
+        commands = self.get_commands_for_mode(spec, normalized_mode)
+        self.run_required_commands(commands)
+        if normalized_mode == "ci":
+            self.run_coverage_gate(spec)

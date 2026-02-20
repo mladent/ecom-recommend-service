@@ -33,7 +33,19 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "forbidden_regex_exempt_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "required_commands": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "precommit_commands": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "ci_commands": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },

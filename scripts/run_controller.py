@@ -19,7 +19,17 @@ def main() -> int:
     parser.add_argument("--task-file", default=".agent/current_task.json")
     parser.add_argument("--staged", action="store_true")
     parser.add_argument("--diff-range", default=None)
+    parser.add_argument(
+        "--mode",
+        choices=["pre-commit", "ci", "auto"],
+        default="auto",
+        help="Controller mode: fast pre-commit checks or strict CI checks",
+    )
     args = parser.parse_args()
+
+    mode = args.mode
+    if mode == "auto":
+        mode = "pre-commit" if args.staged else "ci"
 
     controller = TaskController()
     try:
@@ -27,6 +37,7 @@ def main() -> int:
             task_file=Path(args.task_file),
             staged=args.staged,
             diff_range=args.diff_range,
+            mode=mode,
         )
     except TaskViolationError as exc:
         print(f"❌ Task controller blocked execution: {exc}")
