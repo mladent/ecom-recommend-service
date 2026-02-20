@@ -39,6 +39,7 @@ from src.utils import (
     normalize_description_with_llm,
     select_alternatives_with_llm,
 )
+from src.config import LLMConfig as AppLLMConfig
 
 
 # ============================================================================
@@ -266,6 +267,55 @@ class TestExtractContextsWithLLM:
             api_key="test-key"
         )
         assert result == {"contexts": []}
+
+    @patch("src.utils.LLMClient.chat_completion_json")
+    def test_extract_contexts_with_injected_llm_config(self, mock_chat_json):
+        """Utils helper should accept injected typed LLM config without explicit provider/model args."""
+        mock_chat_json.return_value = {"contexts": []}
+        llm_config = AppLLMConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            temperature=0.2,
+            max_tokens=64,
+            timeout_seconds=15,
+            openai_api_key="test-key",
+        )
+
+        result = extract_contexts_with_llm(
+            text="sample product",
+            max_contexts=3,
+            llm_config=llm_config,
+        )
+
+        assert result == {"contexts": []}
+        assert mock_chat_json.called
+
+
+@pytest.mark.unit
+@pytest.mark.llm
+class TestConfigInjectionPaths:
+    """Tests for llm_config parameter injection across utils helpers."""
+
+    @patch("src.utils.LLMClient.chat_completion")
+    def test_normalize_description_with_injected_llm_config(self, mock_chat_completion):
+        """Normalization helper should use injected llm_config when explicit args are omitted."""
+        mock_chat_completion.return_value = "normalized output"
+        llm_config = AppLLMConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            temperature=0.0,
+            max_tokens=32,
+            timeout_seconds=10,
+            openai_api_key="test-key",
+        )
+
+        result = normalize_description_with_llm(
+            text="RAW DESCRIPTION",
+            llm_config=llm_config,
+        )
+
+        assert result == "normalized output"
+        assert mock_chat_completion.called
 
     @patch("urllib.request.urlopen")
     def test_valid_response_structure(self, mock_urlopen, mock_llm_response_contexts):

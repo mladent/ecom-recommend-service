@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
 from .llm_client import LLMConfig, LLMClient
+from src.config import LLMConfig as AppLLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +284,69 @@ def _build_llm_config(
     )
 
 
+def _resolve_llm_runtime_params(
+    provider: Optional[str],
+    model: Optional[str],
+    temperature: Optional[float],
+    max_tokens: Optional[int],
+    timeout_seconds: Optional[int],
+    api_key: Optional[str],
+    endpoint: Optional[str],
+    deployment: Optional[str],
+    api_version: Optional[str],
+    base_url: Optional[str],
+    llm_config: Optional[AppLLMConfig],
+) -> Tuple[str, str, float, int, int, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Resolve effective LLM call parameters from explicit args and optional typed config.
+
+    Precedence: explicit function arguments > injected `llm_config` values.
+    """
+    if llm_config is not None:
+        provider = provider or llm_config.provider
+        model = model or llm_config.model
+        temperature = temperature if temperature is not None else llm_config.temperature
+        max_tokens = max_tokens if max_tokens is not None else llm_config.max_tokens
+        timeout_seconds = timeout_seconds if timeout_seconds is not None else llm_config.timeout_seconds
+
+        provider_for_key = (provider or llm_config.provider or "").lower()
+        if api_key is None:
+            if provider_for_key == "openai":
+                api_key = llm_config.openai_api_key
+            elif provider_for_key == "azure":
+                api_key = llm_config.azure_api_key
+            elif provider_for_key == "gemini":
+                api_key = llm_config.gemini_api_key
+            elif provider_for_key == "anthropic":
+                api_key = llm_config.anthropic_api_key
+            elif provider_for_key == "perplexity":
+                api_key = llm_config.perplexity_api_key
+
+        endpoint = endpoint or llm_config.azure_endpoint
+        deployment = deployment or llm_config.azure_deployment
+        api_version = api_version or llm_config.azure_api_version
+        base_url = base_url or llm_config.perplexity_base_url
+
+    if provider is None or model is None:
+        raise ValueError("provider and model must be provided, or injected via llm_config")
+    if temperature is None or max_tokens is None or timeout_seconds is None:
+        raise ValueError(
+            "temperature, max_tokens, and timeout_seconds must be provided, or injected via llm_config"
+        )
+
+    return (
+        provider,
+        model,
+        temperature,
+        max_tokens,
+        timeout_seconds,
+        api_key,
+        endpoint,
+        deployment,
+        api_version,
+        base_url,
+    )
+
+
 def _handle_llm_quota_error(exc: Exception) -> bool:
     """
     Detect if exception indicates LLM quota exceeded or rate limited.
@@ -311,16 +375,17 @@ def _handle_llm_quota_error(exc: Exception) -> bool:
 
 def normalize_description_with_llm(
     text: Optional[str],
-    provider: str,
-    model: str,
-    temperature: float,
-    max_tokens: int,
-    timeout_seconds: int,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
     deployment: Optional[str] = None,
     api_version: Optional[str] = None,
     base_url: Optional[str] = None,
+    llm_config: Optional[AppLLMConfig] = None,
 ) -> str:
     """
     Normalize a product description with an LLM provider.
@@ -347,6 +412,31 @@ def normalize_description_with_llm(
         return ""
 
     try:
+        (
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+        ) = _resolve_llm_runtime_params(
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+            llm_config,
+        )
+
         system_prompt = _load_prompt_template("normalize_description_system.md")
         prompt = _render_prompt("normalize_description_user.md", text=text)
         
@@ -367,16 +457,17 @@ def normalize_description_with_llm(
 def enrich_categories_with_llm(
     text: Optional[str],
     fields: List[str],
-    provider: str,
-    model: str,
-    temperature: float,
-    max_tokens: int,
-    timeout_seconds: int,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
     deployment: Optional[str] = None,
     api_version: Optional[str] = None,
     base_url: Optional[str] = None,
+    llm_config: Optional[AppLLMConfig] = None,
 ) -> Dict[str, str]:
     """
     Extract category attributes from a product description using an LLM provider.
@@ -402,6 +493,31 @@ def enrich_categories_with_llm(
         return {field: "NaN" for field in fields}
 
     try:
+        (
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+        ) = _resolve_llm_runtime_params(
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+            llm_config,
+        )
+
         system_prompt = _load_prompt_template("enrich_categories_system.md")
         fields_str = ", ".join(fields)
         prompt = _render_prompt("enrich_categories_user.md", fields=fields_str, text=text)
@@ -426,17 +542,18 @@ def enrich_categories_with_llm(
 def enrich_categories_batch_with_llm(
     texts: List[str],
     fields: List[str],
-    provider: str,
-    model: str,
-    temperature: float,
-    max_tokens: int,
-    timeout_seconds: int,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
     batch_size: int = 10,
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
     deployment: Optional[str] = None,
     api_version: Optional[str] = None,
     base_url: Optional[str] = None,
+    llm_config: Optional[AppLLMConfig] = None,
 ) -> Dict[str, Dict[str, str]]:
     """
     Extract category attributes from multiple product descriptions using batch processing.
@@ -500,6 +617,7 @@ def enrich_categories_batch_with_llm(
                     deployment=deployment,
                     api_version=api_version,
                     base_url=base_url,
+                    llm_config=llm_config,
                 )
                 results[text] = enriched
             except LLMQuotaExceededError:
@@ -530,16 +648,17 @@ def compute_iqr_bounds(series, multiplier: float = 1.5) -> Tuple[float, float]:
 
 def batch_score_anomalies_with_llm(
     records: List[Dict[str, Any]],
-    provider: str,
-    model: str,
-    temperature: float,
-    max_tokens: int,
-    timeout_seconds: int,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
     deployment: Optional[str] = None,
     api_version: Optional[str] = None,
     base_url: Optional[str] = None,
+    llm_config: Optional[AppLLMConfig] = None,
 ) -> Dict[str, Dict[str, str]]:
     """
     Batch score anomalies using an LLM.
@@ -564,6 +683,31 @@ def batch_score_anomalies_with_llm(
         return {}
 
     try:
+        (
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+        ) = _resolve_llm_runtime_params(
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+            llm_config,
+        )
+
         system_prompt = _load_prompt_template("batch_score_anomalies_system.md")
         prompt = _render_prompt(
             "batch_score_anomalies_user.md",
@@ -599,16 +743,17 @@ def batch_score_anomalies_with_llm(
 def extract_contexts_with_llm(
     text: Optional[str],
     max_contexts: int,
-    provider: str,
-    model: str,
-    temperature: float,
-    max_tokens: int,
-    timeout_seconds: int,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
     deployment: Optional[str] = None,
     api_version: Optional[str] = None,
     base_url: Optional[str] = None,
+    llm_config: Optional[AppLLMConfig] = None,
 ) -> Dict[str, Any]:
     """
     Extract usage contexts from a product description using an LLM provider.
@@ -634,6 +779,31 @@ def extract_contexts_with_llm(
         return {"contexts": []}
 
     try:
+        (
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+        ) = _resolve_llm_runtime_params(
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+            llm_config,
+        )
+
         system_prompt = _load_prompt_template("extract_contexts_system.md")
         prompt = _render_prompt("extract_contexts_user.md", max_contexts=max_contexts, text=text)
         
@@ -707,17 +877,18 @@ def _candidate_hash(candidates: List[str]) -> str:
 def select_alternatives_with_llm(
     missing_item: str,
     candidates: List[str],
-    provider: str,
-    model: str,
-    temperature: float,
-    max_tokens: int,
-    timeout_seconds: int,
     max_alternatives: int,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
     deployment: Optional[str] = None,
     api_version: Optional[str] = None,
     base_url: Optional[str] = None,
+    llm_config: Optional[AppLLMConfig] = None,
 ) -> List[Dict[str, Any]]:
     """
     Use LLM to select alternatives for an out-of-stock item from candidates.
@@ -744,6 +915,31 @@ def select_alternatives_with_llm(
         return []
 
     try:
+        (
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+        ) = _resolve_llm_runtime_params(
+            provider,
+            model,
+            temperature,
+            max_tokens,
+            timeout_seconds,
+            api_key,
+            endpoint,
+            deployment,
+            api_version,
+            base_url,
+            llm_config,
+        )
+
         system_prompt = _load_prompt_template("select_alternatives_system.md")
         prompt = _render_prompt(
             "select_alternatives_user.md",
