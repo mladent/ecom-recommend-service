@@ -11,6 +11,7 @@ from src.recommendation_engine import (
     SVMBundleRecommender,
     BundleRecommendationEngine,
 )
+from src.config import EngineConfig, PipelineConfig, LLMConfig, CacheConfig
 
 
 # ============================================================================
@@ -106,6 +107,23 @@ def mock_inventory_csv(tmp_path):
     return str(filepath)
 
 
+@pytest.fixture
+def custom_engine_config():
+    """Custom engine config for injection tests."""
+    return EngineConfig(svm_kernel="rbf", svm_c=2.5, random_state=123, n_jobs=1)
+
+
+@pytest.fixture
+def custom_pipeline_config():
+    """Custom pipeline config for injection tests."""
+    return PipelineConfig(
+        train_test_split=0.73,
+        llm_config=LLMConfig(),
+        cache_config=CacheConfig(),
+        oos_enabled=False,
+    )
+
+
 class TestDataPipeline:
     """Tests for data pipeline."""
 
@@ -137,6 +155,41 @@ class TestDataPipeline:
         baskets = pipeline.create_transaction_baskets()
         assert len(baskets) > 0
         assert "Items" in baskets.columns
+
+
+class TestConfigInjection:
+    """Tests for config injection behavior in recommendation components."""
+
+    def test_svm_recommender_uses_injected_engine_config(self, custom_engine_config):
+        """SVM recommender defaults should come from injected EngineConfig."""
+        recommender = SVMBundleRecommender(config=custom_engine_config)
+        assert recommender.kernel == "rbf"
+        assert recommender.C == 2.5
+        assert recommender.model.random_state == 123
+
+    def test_fit_all_uses_pipeline_split_default(
+        self,
+        sample_transactions,
+        sample_bundles,
+        custom_engine_config,
+        custom_pipeline_config,
+    ):
+        """BundleRecommendationEngine.fit_all should default to injected pipeline split."""
+        engine = BundleRecommendationEngine(
+            engine_config=custom_engine_config,
+            pipeline_config=custom_pipeline_config,
+        )
+        mock_recommender = MagicMock()
+        mock_recommender.fit.return_value = {"accuracy": 1.0}
+        engine.add_recommender("mock", mock_recommender)
+
+        engine.fit_all(sample_transactions, sample_bundles)
+
+        assert mock_recommender.fit.called
+        args = mock_recommender.fit.call_args[0]
+        assert args[0] == sample_transactions
+        assert args[1] == sample_bundles
+        assert args[2] == pytest.approx(0.73)
 
 
 class TestNaiveBayesRecommender:

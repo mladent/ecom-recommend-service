@@ -6,6 +6,7 @@ to auto-tag products with fine-grained categories and attributes.
 """
 
 import pandas as pd
+from src.config import load_config
 from src.data_pipeline import DataPipeline
 
 # Example: Enable category enrichment via environment variables
@@ -47,8 +48,9 @@ def main():
         print(f"  - {row['Description']}")
     print()
     
-    # Initialize pipeline
-    pipeline = DataPipeline()
+    # Initialize pipeline with explicit config object
+    pipeline_config, _, _, _, _ = load_config()
+    pipeline = DataPipeline(config=pipeline_config)
     pipeline.raw_data = sample_data
     
     print("Running preprocessing with category enrichment...")

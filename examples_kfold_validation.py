@@ -18,6 +18,7 @@ Usage:
 
 import logging
 import sys
+from src.config import load_config
 from src.recommendation_engine import (
     BundleRecommendationEngine,
     NaiveBayesBundleRecommender,
@@ -154,9 +155,11 @@ def main():
     if quick_mode:
         logger.info("Quick demo mode: Using 0.5% of data for fastest execution")
 
+    pipeline_config, engine_config, _, _, _ = load_config()
+
     # Load processed data
     logger.info("\nLoading processed data...")
-    pipeline = DataPipeline()
+    pipeline = DataPipeline(config=pipeline_config)
     pipeline.load_raw_data()
     pipeline.preprocess()
     transactions = pipeline.create_transaction_baskets()
@@ -208,11 +211,26 @@ def main():
     logger.info("EXAMPLE 1: Single Random Split (80/20)")
     logger.info("=" * 80)
 
-    engine1 = BundleRecommendationEngine()
+    engine1 = BundleRecommendationEngine(
+        engine_config=engine_config,
+        pipeline_config=pipeline_config,
+    )
     if models_config["naive_bayes"]:
-        engine1.add_recommender("naive_bayes", NaiveBayesBundleRecommender())
+        engine1.add_recommender(
+            "naive_bayes",
+            NaiveBayesBundleRecommender(
+                config=engine_config,
+                default_validation_split=pipeline_config.train_test_split,
+            ),
+        )
     if models_config["svm"]:
-        engine1.add_recommender("svm", SVMBundleRecommender())
+        engine1.add_recommender(
+            "svm",
+            SVMBundleRecommender(
+                config=engine_config,
+                default_validation_split=pipeline_config.train_test_split,
+            ),
+        )
 
     logger.info("\nTraining with single random split...")
     metrics1 = engine1.fit_all_with_random_split(transaction_items, bundle_list, test_size=0.2)
@@ -238,11 +256,26 @@ def main():
     logger.info("EXAMPLE 2: 10-Fold Cross-Validation")
     logger.info("=" * 80)
 
-    engine2 = BundleRecommendationEngine()
+    engine2 = BundleRecommendationEngine(
+        engine_config=engine_config,
+        pipeline_config=pipeline_config,
+    )
     if models_config["naive_bayes"]:
-        engine2.add_recommender("naive_bayes", NaiveBayesBundleRecommender())
+        engine2.add_recommender(
+            "naive_bayes",
+            NaiveBayesBundleRecommender(
+                config=engine_config,
+                default_validation_split=pipeline_config.train_test_split,
+            ),
+        )
     if models_config["svm"]:
-        engine2.add_recommender("svm", SVMBundleRecommender())
+        engine2.add_recommender(
+            "svm",
+            SVMBundleRecommender(
+                config=engine_config,
+                default_validation_split=pipeline_config.train_test_split,
+            ),
+        )
 
     logger.info("\nTraining with 10-fold cross-validation...")
     metrics2 = engine2.fit_all_with_kfold(transaction_items, bundle_list, n_splits=10)

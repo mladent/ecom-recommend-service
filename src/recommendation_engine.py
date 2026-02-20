@@ -25,11 +25,6 @@ from src.config import (
     EngineConfig,
     PipelineConfig,
     load_config,
-    RANDOM_STATE,
-    TRAIN_TEST_SPLIT,
-    N_JOBS,
-    SVM_KERNEL,
-    SVM_C,
     OOS_ENABLED,
     OOS_CACHE_FIRST,
     OOS_CACHE_PATH,
@@ -69,8 +64,25 @@ logger = logging.getLogger(__name__)
 class BaseRecommender(ABC):
     """Base class for bundle recommenders."""
 
-    def __init__(self, name: str = "BaseRecommender"):
+    def __init__(
+        self,
+        name: str = "BaseRecommender",
+        config: Optional[EngineConfig] = None,
+        default_validation_split: Optional[float] = None,
+    ):
         """Initialize base recommender."""
+        if config is None or default_validation_split is None:
+            loaded_pipeline, loaded_engine, _, _, _ = load_config()
+            self.config = config or loaded_engine
+            self.default_validation_split = (
+                default_validation_split
+                if default_validation_split is not None
+                else loaded_pipeline.train_test_split
+            )
+        else:
+            self.config = config
+            self.default_validation_split = default_validation_split
+
         self.name = name
         self.model = None
         self.feature_encoder = None
@@ -121,7 +133,7 @@ class BaseRecommender(ABC):
         self,
         transactions: List[List[str]],
         bundles: List[Tuple[str, ...]],
-        validation_split: float = TRAIN_TEST_SPLIT,
+        validation_split: Optional[float] = None,
     ) -> Dict:
         """Fit the model with transactions and bundles."""
         pass
@@ -140,14 +152,23 @@ class BaseRecommender(ABC):
 class NaiveBayesBundleRecommender(BaseRecommender):
     """Bundle recommender using Naive Bayes algorithm."""
 
-    def __init__(self, model_type: str = "multinomial"):
+    def __init__(
+        self,
+        model_type: str = "multinomial",
+        config: Optional[EngineConfig] = None,
+        default_validation_split: Optional[float] = None,
+    ):
         """
         Initialize Naive Bayes recommender.
 
         Args:
             model_type: 'multinomial' or 'gaussian'
         """
-        super().__init__(name="NaiveBayesBundleRecommender")
+        super().__init__(
+            name="NaiveBayesBundleRecommender",
+            config=config,
+            default_validation_split=default_validation_split,
+        )
         self.model_type = model_type
 
         if model_type == "multinomial":
@@ -164,7 +185,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         self,
         transactions: List[List[str]],
         bundles: List[Tuple[str, ...]],
-        validation_split: float = TRAIN_TEST_SPLIT,
+        validation_split: Optional[float] = None,
     ) -> Dict:
         """
         Fit the Naive Bayes model using random train-test split.
@@ -178,6 +199,10 @@ class NaiveBayesBundleRecommender(BaseRecommender):
             dict: Training metrics
         """
         logger.info(f"Fitting {self.name} with random split...")
+
+        validation_split_value = (
+            validation_split if validation_split is not None else self.default_validation_split
+        )
 
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
@@ -194,7 +219,10 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=1 - validation_split, random_state=RANDOM_STATE
+            X,
+            y,
+            test_size=1 - validation_split_value,
+            random_state=self.config.random_state,
         )
 
         # Handle dense/sparse for Gaussian NB
@@ -353,7 +381,13 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 class SVMBundleRecommender(BaseRecommender):
     """Bundle recommender using Support Vector Machine algorithm."""
 
-    def __init__(self, kernel: str = "linear", C: float = 1.0):
+    def __init__(
+        self,
+        kernel: Optional[str] = None,
+        C: Optional[float] = None,
+        config: Optional[EngineConfig] = None,
+        default_validation_split: Optional[float] = None,
+    ):
         """
         Initialize SVM recommender.
 
@@ -361,10 +395,19 @@ class SVMBundleRecommender(BaseRecommender):
             kernel: SVM kernel type ('linear', 'rbf', 'poly', etc.)
             C: Regularization parameter
         """
-        super().__init__(name="SVMBundleRecommender")
-        self.kernel = kernel
-        self.C = C
-        self.model = SVC(kernel=kernel, C=C, probability=True, random_state=RANDOM_STATE)  # type: ignore[arg-type]
+        super().__init__(
+            name="SVMBundleRecommender",
+            config=config,
+            default_validation_split=default_validation_split,
+        )
+        self.kernel = kernel if kernel is not None else self.config.svm_kernel
+        self.C = C if C is not None else self.config.svm_c
+        self.model = SVC(
+            kernel=self.kernel,
+            C=self.C,
+            probability=True,
+            random_state=self.config.random_state,
+        )  # type: ignore[arg-type]
         self.mlb = MultiLabelBinarizer()
         self.scaler = StandardScaler()
         self.feature_names = None
@@ -374,7 +417,7 @@ class SVMBundleRecommender(BaseRecommender):
         self,
         transactions: List[List[str]],
         bundles: List[Tuple[str, ...]],
-        validation_split: float = TRAIN_TEST_SPLIT,
+        validation_split: Optional[float] = None,
     ) -> Dict:
         """
         Fit the SVM model using random train-test split.
@@ -388,6 +431,10 @@ class SVMBundleRecommender(BaseRecommender):
             dict: Training metrics
         """
         logger.info(f"Fitting {self.name} with kernel={self.kernel}, C={self.C} using random split...")
+
+        validation_split_value = (
+            validation_split if validation_split is not None else self.default_validation_split
+        )
 
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
@@ -408,7 +455,10 @@ class SVMBundleRecommender(BaseRecommender):
 
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=1 - validation_split, random_state=RANDOM_STATE
+            X_scaled,
+            y,
+            test_size=1 - validation_split_value,
+            random_state=self.config.random_state,
         )
 
         # Fit model
@@ -473,7 +523,7 @@ class SVMBundleRecommender(BaseRecommender):
                 kernel=self.kernel,  # type: ignore[arg-type]
                 C=self.C,
                 probability=True,
-                random_state=RANDOM_STATE,
+                random_state=self.config.random_state,
             )
             model.fit(X_train, y_train)
 
@@ -611,7 +661,7 @@ class BundleRecommendationEngine:
         self,
         transactions: List[List[str]],
         bundles: List[Tuple[str, ...]],
-        validation_split: float = TRAIN_TEST_SPLIT,
+        validation_split: Optional[float] = None,
     ) -> Dict[str, Dict]:
         """
         Fit all recommenders using random train-test split.
@@ -626,11 +676,16 @@ class BundleRecommendationEngine:
         """
         self.transactions = transactions
         self.bundles = bundles
+        validation_split_value = (
+            validation_split
+            if validation_split is not None
+            else self.pipeline_config.train_test_split
+        )
 
         metrics = {}
         for name, recommender in self.recommenders.items():
             logger.info(f"Training {name}...")
-            metrics[name] = recommender.fit(transactions, bundles, validation_split)
+            metrics[name] = recommender.fit(transactions, bundles, validation_split_value)
 
         return metrics
 
