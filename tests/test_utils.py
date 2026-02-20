@@ -240,31 +240,21 @@ class TestExtractContextsWithLLM:
     - Markdown code block parsing in JSON
     """
 
-    def test_empty_input_returns_empty_contexts(self):
+    def test_empty_input_returns_empty_contexts(self, typed_llm_config):
         """Empty product description returns empty contexts list."""
         result = extract_contexts_with_llm(
             text="",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         assert result == {"contexts": []}
 
-    def test_none_input_returns_empty_contexts(self):
+    def test_none_input_returns_empty_contexts(self, typed_llm_config):
         """None input returns empty contexts list."""
         result = extract_contexts_with_llm(
             text=None,
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         assert result == {"contexts": []}
 
@@ -318,7 +308,7 @@ class TestConfigInjectionPaths:
         assert mock_chat_completion.called
 
     @patch("urllib.request.urlopen")
-    def test_valid_response_structure(self, mock_urlopen, mock_llm_response_contexts):
+    def test_valid_response_structure(self, mock_urlopen, mock_llm_response_contexts, typed_llm_config):
         """Valid LLM response parsed with correct structure."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_contexts).encode("utf-8")
@@ -329,19 +319,14 @@ class TestConfigInjectionPaths:
         result = extract_contexts_with_llm(
             text="Blue T-Shirt for casual wear",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert "contexts" in result
         assert isinstance(result["contexts"], list)
 
     @patch("urllib.request.urlopen")
-    def test_invalid_json_response_returns_empty(self, mock_urlopen):
+    def test_invalid_json_response_returns_empty(self, mock_urlopen, typed_llm_config):
         """Invalid JSON response gracefully returns empty contexts."""
         mock_response = MagicMock()
         mock_response.read.return_value = b"invalid json {{{broken"
@@ -350,18 +335,13 @@ class TestConfigInjectionPaths:
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert result == {"contexts": []}
 
     @patch("urllib.request.urlopen")
-    def test_missing_contexts_field_returns_empty(self, mock_urlopen):
+    def test_missing_contexts_field_returns_empty(self, mock_urlopen, typed_llm_config):
         """Response without 'contexts' field returns empty contexts."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps({"data": []}).encode("utf-8")
@@ -370,18 +350,13 @@ class TestConfigInjectionPaths:
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert result == {"contexts": []}
 
     @patch("urllib.request.urlopen")
-    def test_markdown_code_block_parsing(self, mock_urlopen, mock_llm_response_contexts):
+    def test_markdown_code_block_parsing(self, mock_urlopen, mock_llm_response_contexts, typed_llm_config):
         """JSON wrapped in markdown code blocks is extracted correctly."""
         markdown_response = f"```json\n{json.dumps(mock_llm_response_contexts)}\n```"
         mock_response = MagicMock()
@@ -391,59 +366,61 @@ class TestConfigInjectionPaths:
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         # Should parse despite markdown wrapping
         assert "contexts" in result
 
     @patch("urllib.request.urlopen")
-    def test_service_error_returns_empty(self, mock_urlopen):
+    def test_service_error_returns_empty(self, mock_urlopen, typed_llm_config):
         """Service error (HTTP error) returns empty contexts gracefully."""
         mock_urlopen.side_effect = Exception("Connection refused")
 
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert result == {"contexts": []}
 
     @patch("urllib.request.urlopen")
     @pytest.mark.parametrize("provider", ["openai", "azure", "gemini", "anthropic", "perplexity"])
-    def test_all_providers(self, mock_urlopen, provider, mock_llm_response_contexts):
+    def test_all_providers(self, mock_urlopen, provider, mock_llm_response_contexts, typed_llm_config):
         """All 5 LLM providers supported with identical behavior."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_contexts).encode("utf-8")
         mock_urlopen.return_value = mock_response
 
+        llm_config = AppLLMConfig(
+            provider=provider,
+            model="appropriate-for-provider",
+            temperature=typed_llm_config.temperature,
+            max_tokens=typed_llm_config.max_tokens,
+            timeout_seconds=typed_llm_config.timeout_seconds,
+            openai_api_key=typed_llm_config.openai_api_key,
+            azure_api_key=typed_llm_config.azure_api_key,
+            azure_endpoint=typed_llm_config.azure_endpoint,
+            azure_deployment=typed_llm_config.azure_deployment,
+            azure_api_version=typed_llm_config.azure_api_version,
+            gemini_api_key=typed_llm_config.gemini_api_key,
+            anthropic_api_key=typed_llm_config.anthropic_api_key,
+            perplexity_api_key=typed_llm_config.perplexity_api_key,
+            perplexity_base_url=typed_llm_config.perplexity_base_url,
+        )
+
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider=provider,
-            model="appropriate-for-provider",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=llm_config,
         )
 
         assert "contexts" in result
         assert len(result["contexts"]) >= 0
 
     @patch("urllib.request.urlopen")
-    def test_max_contexts_limit_respected(self, mock_urlopen):
+    def test_max_contexts_limit_respected(self, mock_urlopen, typed_llm_config):
         """Response with more contexts than max_contexts returns only max_contexts."""
         response = {
             "contexts": [
@@ -458,12 +435,7 @@ class TestConfigInjectionPaths:
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=3,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         # Should respect max_contexts limit or return all
