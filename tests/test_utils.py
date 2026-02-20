@@ -607,23 +607,18 @@ class TestEnrichCategoriesBatchWithLLM:
     - Field mapping correctness
     """
 
-    def test_empty_list_returns_empty(self):
+    def test_empty_list_returns_empty(self, typed_llm_config):
         """Empty product list returns empty results dict."""
         result = enrich_categories_batch_with_llm(
             texts=[],
             fields=["category", "material"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
             batch_size=10,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == {}
 
-    def test_single_item(self):
+    def test_single_item(self, typed_llm_config):
         """Single item processed correctly."""
         texts = ["Blue Cotton T-Shirt"]
         
@@ -633,18 +628,13 @@ class TestEnrichCategoriesBatchWithLLM:
             result = enrich_categories_batch_with_llm(
                 texts=texts,
                 fields=["category", "material"],
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=256,
-                timeout_seconds=30,
                 batch_size=10,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             assert len(result) >= 0  # May be 0 or 1 depending on implementation
 
-    def test_multiple_items(self):
+    def test_multiple_items(self, typed_llm_config):
         """Multiple items processed in batch."""
         texts = [
             "Blue Cotton T-Shirt",
@@ -658,19 +648,14 @@ class TestEnrichCategoriesBatchWithLLM:
             result = enrich_categories_batch_with_llm(
                 texts=texts,
                 fields=["category", "material"],
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=256,
-                timeout_seconds=30,
                 batch_size=2,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             # Should process without errors
             assert isinstance(result, dict)
 
-    def test_duplicate_texts_deduplicated(self):
+    def test_duplicate_texts_deduplicated(self, typed_llm_config):
         """Duplicate texts are deduplicated before processing."""
         texts = [
             "Blue Cotton T-Shirt",
@@ -684,19 +669,14 @@ class TestEnrichCategoriesBatchWithLLM:
             result = enrich_categories_batch_with_llm(
                 texts=texts,
                 fields=["category", "material"],
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=256,
-                timeout_seconds=30,
                 batch_size=10,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             # Should call LLM fewer times due to deduplication
             assert isinstance(result, dict)
 
-    def test_batch_size_respected(self):
+    def test_batch_size_respected(self, typed_llm_config):
         """Batch size limits are respected in processing."""
         texts = [f"Product {i}" for i in range(25)]
         
@@ -706,13 +686,8 @@ class TestEnrichCategoriesBatchWithLLM:
             result = enrich_categories_batch_with_llm(
                 texts=texts,
                 fields=["category", "material"],
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=256,
-                timeout_seconds=30,
                 batch_size=5,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             # Should process without errors
