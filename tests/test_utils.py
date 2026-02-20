@@ -734,21 +734,16 @@ class TestBatchScoreAnomaliesWithLLM:
     - Missing/extra keys in response
     """
 
-    def test_empty_list_returns_empty(self):
+    def test_empty_list_returns_empty(self, typed_llm_config):
         """Empty transaction list returns empty results."""
         result = batch_score_anomalies_with_llm(
             records=[],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == {}
 
-    def test_single_record(self):
+    def test_single_record(self, typed_llm_config):
         """Single record scored correctly."""
         records = [
             {"transaction_id": "1", "amount": 100, "quantity": 5}
@@ -768,17 +763,12 @@ class TestBatchScoreAnomaliesWithLLM:
             
             result = batch_score_anomalies_with_llm(
                 records=records,
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=512,
-                timeout_seconds=30,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             assert isinstance(result, dict)
 
-    def test_multiple_records(self):
+    def test_multiple_records(self, typed_llm_config):
         """Multiple records scored in batch."""
         records = [
             {"transaction_id": "1", "amount": 100, "quantity": 5},
@@ -798,18 +788,13 @@ class TestBatchScoreAnomaliesWithLLM:
             
             result = batch_score_anomalies_with_llm(
                 records=records,
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=512,
-                timeout_seconds=30,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             assert isinstance(result, dict)
 
     @patch("urllib.request.urlopen")
-    def test_invalid_json_returns_empty(self, mock_urlopen):
+    def test_invalid_json_returns_empty(self, mock_urlopen, typed_llm_config):
         """Invalid JSON response returns empty dict gracefully."""
         mock_response = MagicMock()
         mock_response.read.return_value = b"invalid {{{"
@@ -817,36 +802,26 @@ class TestBatchScoreAnomaliesWithLLM:
         
         result = batch_score_anomalies_with_llm(
             records=[{"transaction_id": "1", "amount": 100}],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == {}
 
     @patch("urllib.request.urlopen")
-    def test_service_error_returns_empty(self, mock_urlopen):
+    def test_service_error_returns_empty(self, mock_urlopen, typed_llm_config):
         """Service error returns empty dict gracefully."""
         mock_urlopen.side_effect = Exception("Service error")
         
         result = batch_score_anomalies_with_llm(
             records=[{"transaction_id": "1", "amount": 100}],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == {}
 
     @patch("urllib.request.urlopen")
     @pytest.mark.parametrize("provider", ["openai", "azure", "gemini", "anthropic", "perplexity"])
-    def test_all_providers_supported(self, mock_urlopen, provider):
+    def test_all_providers_supported(self, mock_urlopen, provider, typed_llm_config):
         """All 5 LLM providers supported."""
         response = {
             "record_1": {"is_anomalous": False, "anomaly_type": "normal"}
@@ -855,14 +830,26 @@ class TestBatchScoreAnomaliesWithLLM:
         mock_response.read.return_value = json.dumps(response).encode("utf-8")
         mock_urlopen.return_value = mock_response
         
-        result = batch_score_anomalies_with_llm(
-            records=[{"transaction_id": "1", "amount": 100}],
+        llm_config = AppLLMConfig(
             provider=provider,
             model="appropriate-for-provider",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            temperature=typed_llm_config.temperature,
+            max_tokens=typed_llm_config.max_tokens,
+            timeout_seconds=typed_llm_config.timeout_seconds,
+            openai_api_key=typed_llm_config.openai_api_key,
+            azure_api_key=typed_llm_config.azure_api_key,
+            azure_endpoint=typed_llm_config.azure_endpoint,
+            azure_deployment=typed_llm_config.azure_deployment,
+            azure_api_version=typed_llm_config.azure_api_version,
+            gemini_api_key=typed_llm_config.gemini_api_key,
+            anthropic_api_key=typed_llm_config.anthropic_api_key,
+            perplexity_api_key=typed_llm_config.perplexity_api_key,
+            perplexity_base_url=typed_llm_config.perplexity_base_url,
+        )
+
+        result = batch_score_anomalies_with_llm(
+            records=[{"transaction_id": "1", "amount": 100}],
+            llm_config=llm_config,
         )
         
         assert isinstance(result, dict)
