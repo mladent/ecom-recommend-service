@@ -448,6 +448,8 @@
   - **Progress Update (20 February 2026):**
     - ✅ Added shared typed config fixtures in [tests/conftest.py](tests/conftest.py)
     - ✅ Migrated one-file slices: [tests/test_data_pipeline.py](tests/test_data_pipeline.py), [tests/test_recommendation_engine.py](tests/test_recommendation_engine.py), [tests/test_api.py](tests/test_api.py), [tests/test_llm_integration.py](tests/test_llm_integration.py)
+    - ✅ Expanded [tests/test_utils.py](tests/test_utils.py) config-injection coverage in `TestExtractContextsWithLLM`, `TestEnrichCategoriesWithLLM`, and `TestBatchScoreAnomaliesWithLLM`
+    - ✅ Latest validation snapshots: `tests/test_utils.py` passing (173/173), focused class checks passing for migrated blocks
     - ✅ Targeted matrix passed: `tests/test_data_pipeline.py tests/test_recommendation_engine.py tests/test_api.py tests/test_llm_integration.py tests/test_utils.py` → 357 passed, 3 skipped
     - ⏳ Remaining: continue reducing repetitive explicit LLM argument patterns in [tests/test_utils.py](tests/test_utils.py) and finalize full-suite fixture migration
   - **Tasks:**
