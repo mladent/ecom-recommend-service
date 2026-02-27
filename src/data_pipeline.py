@@ -5,24 +5,13 @@ import pickle
 import logging
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from datetime import datetime
 from typing import Tuple, List, Dict, Optional, Any
-from itertools import combinations
 from collections import Counter
 
 from src.config import (
-    RAW_DATA_PATH,
-    PROCESSED_DATA_PATH,
-    MIN_SUPPORT,
-    MIN_CONFIDENCE,
-    MAX_BUNDLE_SIZE,
-    RANDOM_STATE,
-    NORMALIZATION_ENABLED,
-    NORMALIZATION_CACHE_FIRST,
-    NORMALIZATION_CACHE_PATH,
-    NORMALIZATION_ALIAS_MAP_PATH,
-    NORMALIZATION_MIN_LENGTH,
+    PipelineConfig,
+    load_config,
     LLM_PROVIDER,
     LLM_MODEL,
     LLM_TEMPERATURE,
@@ -37,34 +26,14 @@ from src.config import (
     ANTHROPIC_API_KEY,
     PERPLEXITY_API_KEY,
     PERPLEXITY_BASE_URL,
-    ENRICHMENT_ENABLED,
-    ENRICHMENT_CACHE_FIRST,
-    ENRICHMENT_CACHE_PATH,
-    ENRICHMENT_BATCH_SIZE,
-    ENRICHMENT_FIELDS,
-    OUTLIER_ENABLED,
-    OUTLIER_CACHE_FIRST,
-    OUTLIER_CACHE_PATH,
-    OUTLIER_OUTPUT_PATH,
-    OUTLIER_BATCH_SIZE,
-    OUTLIER_IQR_MULTIPLIER,
-    OUTLIER_FIELDS,
-    CONTEXT_ENABLED,
-    CONTEXT_CACHE_FIRST,
-    CONTEXT_CACHE_PATH,
-    CONTEXT_MAX_CONTEXTS,
-    CONTEXT_MIN_CONFIDENCE,
 )
+from src.llm_client import LLMConfig, LLMClient
 from src.utils import (
-    normalize_description_basic,
-    normalize_description_with_llm,
-    enrich_categories_with_llm,
     enrich_categories_batch_with_llm,
     extract_contexts_with_llm,
     compute_iqr_bounds,
     batch_score_anomalies_with_llm,
     LLMQuotaExceededError,
-    load_alias_map,
     load_json_file,
     save_json_file,
 )
@@ -75,11 +44,12 @@ logger = logging.getLogger(__name__)
 class DataPipeline:
     """Pipeline for loading, cleaning, and preprocessing e-commerce data."""
 
-    def __init__(self, force_reprocess: bool = False):
+    def __init__(self, force_reprocess: bool = False, config: Optional[PipelineConfig] = None):
         """Initialize the data pipeline.
         
         Args:
             force_reprocess: If True, bypass all LLM caches and reprocess from scratch
+            config: Optional PipelineConfig object. If None, loads config from environment via load_config()
         """
         self.raw_data = None
         self.processed_data = None
@@ -87,6 +57,154 @@ class DataPipeline:
         self.transactions = None
         self.bundles = None
         self.force_reprocess = force_reprocess
+        self._config_injected = config is not None
+        
+        # Load configuration
+        if config is None:
+            pipeline_config, _, _, _, _ = load_config()
+            self.config = pipeline_config
+        else:
+            self.config = config
+
+    def _get_api_key_for_provider(self, provider: str) -> Optional[str]:
+        """Get the correct API key for the specified LLM provider.
+        
+        Args:
+            provider: LLM provider name ('openai', 'azure', 'gemini', 'anthropic', 'perplexity')
+        
+        Returns:
+            Optional[str]: API key for the provider, or None if not configured
+        """
+        provider_lower = provider.lower()
+        if not self._config_injected:
+            if provider_lower == "openai":
+                return OPENAI_API_KEY
+            elif provider_lower == "azure":
+                return AZURE_OPENAI_API_KEY
+            elif provider_lower == "gemini":
+                return GEMINI_API_KEY
+            elif provider_lower == "anthropic":
+                return ANTHROPIC_API_KEY
+            elif provider_lower == "perplexity":
+                return PERPLEXITY_API_KEY
+            return None
+
+        llm_config = self.config.llm_config
+        if provider_lower == "openai":
+            return llm_config.openai_api_key
+        elif provider_lower == "azure":
+            return llm_config.azure_api_key
+        elif provider_lower == "gemini":
+            return llm_config.gemini_api_key
+        elif provider_lower == "anthropic":
+            return llm_config.anthropic_api_key
+        elif provider_lower == "perplexity":
+            return llm_config.perplexity_api_key
+        return None
+
+    def _get_base_url_for_provider(self, provider: str) -> Optional[str]:
+        """Get the base URL for the specified LLM provider (if applicable).
+        
+        Args:
+            provider: LLM provider name
+        
+        Returns:
+            Optional[str]: Base URL for the provider, or None if not applicable
+        """
+        if provider.lower() == "perplexity":
+            if not self._config_injected:
+                return PERPLEXITY_BASE_URL
+            return self.config.llm_config.perplexity_base_url
+        return None
+
+    def _build_pipeline_llm_config(self) -> LLMConfig:
+        """Build LLMConfig from injected PipelineConfig settings.
+        
+        Centralizes provider-specific credential mapping for all LLM functions
+        in the data pipeline, eliminating duplicate config creation across methods.
+        
+        Returns:
+            LLMConfig: Configured LLM client configuration object
+        """
+        if not self._config_injected:
+            provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
+            return LLMConfig(
+                provider=LLM_PROVIDER,
+                model=LLM_MODEL,
+                temperature=LLM_TEMPERATURE,
+                max_tokens=LLM_MAX_TOKENS,
+                timeout_seconds=LLM_TIMEOUT_SECONDS,
+                openai_api_key=OPENAI_API_KEY if provider == "openai" else None,
+                azure_api_key=AZURE_OPENAI_API_KEY if provider == "azure" else None,
+                azure_endpoint=AZURE_OPENAI_ENDPOINT if provider == "azure" else None,
+                azure_deployment=AZURE_OPENAI_DEPLOYMENT if provider == "azure" else None,
+                azure_api_version=AZURE_OPENAI_API_VERSION if provider == "azure" else None,
+                gemini_api_key=GEMINI_API_KEY if provider == "gemini" else None,
+                anthropic_api_key=ANTHROPIC_API_KEY if provider == "anthropic" else None,
+                perplexity_api_key=PERPLEXITY_API_KEY if provider == "perplexity" else None,
+                perplexity_base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+            )
+
+        llm_config = self.config.llm_config
+        provider = llm_config.provider.lower() if llm_config.provider else "openai"
+        return LLMConfig(
+            provider=llm_config.provider,
+            model=llm_config.model,
+            temperature=llm_config.temperature,
+            max_tokens=llm_config.max_tokens,
+            timeout_seconds=llm_config.timeout_seconds,
+            openai_api_key=llm_config.openai_api_key if provider == "openai" else None,
+            azure_api_key=llm_config.azure_api_key if provider == "azure" else None,
+            azure_endpoint=llm_config.azure_endpoint if provider == "azure" else None,
+            azure_deployment=llm_config.azure_deployment if provider == "azure" else None,
+            azure_api_version=llm_config.azure_api_version if provider == "azure" else None,
+            gemini_api_key=llm_config.gemini_api_key if provider == "gemini" else None,
+            anthropic_api_key=llm_config.anthropic_api_key if provider == "anthropic" else None,
+            perplexity_api_key=llm_config.perplexity_api_key if provider == "perplexity" else None,
+            perplexity_base_url=llm_config.perplexity_base_url if provider == "perplexity" else None,
+        )
+
+    def _handle_llm_quota_error_standardized(self, exc: Exception, fallback_strategy: str) -> None:
+        """Handle LLM quota exceeded errors with standardized behavior.
+        
+        Centralizes error handling for quota/rate limit errors, providing
+        consistent logging and fallback strategy tracking across all LLM methods.
+        
+        Args:
+            exc: The exception that occurred
+            fallback_strategy: Strategy name to use ('fill_nan', 'use_heuristic', 'skip_batch')
+        
+        Raises:
+            LLMQuotaExceededError: Re-raises the quota error for caller to handle
+        """
+        logger.warning(
+            f"LLM quota exceeded or rate limited: {exc}. "
+            f"Using fallback strategy: {fallback_strategy}"
+        )
+        # Re-raise to let calling method implement strategy-specific handling
+        raise LLMQuotaExceededError(str(exc)) from exc
+
+    def _validate_and_load_cache(self, cache_path: str, enabled: bool, force_reprocess: bool) -> Dict[str, Any]:
+        """Load and validate cache with unified logic for all pipeline methods.
+        
+        Consolidates cache loading validation logic used by _enrich_categories,
+        _flag_anomalies, and _extract_contexts methods.
+        
+        Args:
+            cache_path: Path to the cache JSON file
+            enabled: Whether caching is enabled for this operation
+            force_reprocess: Whether to bypass cache and reprocess from scratch
+        
+        Returns:
+            Dict[str, Any]: Loaded cache dictionary, empty dict if cache disabled or not found
+        """
+        if not enabled or force_reprocess:
+            return {}
+        
+        cache = load_json_file(cache_path)
+        if cache:
+            logger.info(f"Loaded cache from: {cache_path} ({len(cache)} entries)")
+        return cache
 
     def download_kaggle_data(self) -> bool:
         """
@@ -96,8 +214,9 @@ class DataPipeline:
             bool: True if successful, False otherwise
         """
         # Check if data already exists
-        if os.path.exists(RAW_DATA_PATH):
-            logger.info(f"Dataset already exists at: {RAW_DATA_PATH}")
+        raw_data_path = self.config.raw_data_path
+        if os.path.exists(raw_data_path):
+            logger.info(f"Dataset already exists at: {raw_data_path}")
             logger.info("Skipping download and continuing with processing")
             return True
 
@@ -108,7 +227,7 @@ class DataPipeline:
             api.authenticate()
 
             dataset_name = "carrie1/ecommerce-data"
-            download_path = os.path.dirname(RAW_DATA_PATH)
+            download_path = os.path.dirname(raw_data_path)
 
             logger.info(f"Downloading dataset: {dataset_name}")
             api.dataset_download_files(dataset_name, path=download_path, unzip=True)
@@ -119,7 +238,7 @@ class DataPipeline:
             logger.error(f"Failed to download Kaggle dataset: {e}")
             return False
 
-    def load_raw_data(self, filepath: str = RAW_DATA_PATH) -> pd.DataFrame:
+    def load_raw_data(self, filepath: Optional[str] = None) -> pd.DataFrame:
         """
         Load raw data from CSV file.
 
@@ -129,12 +248,18 @@ class DataPipeline:
         Returns:
             pd.DataFrame: Raw data
         """
-        if not os.path.exists(filepath):
-            logger.error(f"Data file not found: {filepath}")
-            raise FileNotFoundError(f"Data file not found: {filepath}")
+        data_filepath = filepath or self.config.raw_data_path
 
-        logger.info(f"Loading raw data from: {filepath}")
-        self.raw_data = pd.read_csv(filepath, encoding="ISO-8859-1")
+        if not os.path.exists(data_filepath):
+            logger.error(f"Data file not found: {data_filepath}")
+            raise FileNotFoundError(f"Data file not found: {data_filepath}")
+
+        logger.info(f"Loading raw data from: {data_filepath}")
+        self.raw_data = pd.read_csv(
+            data_filepath,
+            encoding="ISO-8859-1",
+            dtype={"InvoiceNo": str, "StockCode": str},
+        )
         logger.info(f"Loaded {len(self.raw_data)} records, {len(self.raw_data.columns)} columns")
         return self.raw_data
 
@@ -218,7 +343,7 @@ class DataPipeline:
         logger.info(f"Dataset Statistics ({stage} data): {stats}")
         return stats
 
-    def convert_csv_to_tsv(self, input_filepath: str = RAW_DATA_PATH, output_filepath: Optional[str] = None) -> bool:
+    def convert_csv_to_tsv(self, input_filepath: Optional[str] = None, output_filepath: Optional[str] = None) -> bool:
         """
         Convert CSV file to TSV format with UTF-8 encoding.
 
@@ -230,12 +355,14 @@ class DataPipeline:
             bool: True if successful, False otherwise
         """
         try:
+            source_filepath = input_filepath or self.config.raw_data_path
+
             if output_filepath is None:
-                output_filepath = input_filepath.replace(".csv", ".tsv")
+                output_filepath = source_filepath.replace(".csv", ".tsv")
 
             # Load CSV with original encoding
-            logger.info(f"Loading CSV from: {input_filepath}")
-            df = pd.read_csv(input_filepath, encoding="ISO-8859-1")
+            logger.info(f"Loading CSV from: {source_filepath}")
+            df = pd.read_csv(source_filepath, encoding="ISO-8859-1")
 
             # Save as TSV with UTF-8 encoding
             os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
@@ -255,16 +382,15 @@ class DataPipeline:
         # Save cancellations to separate file
         cancellations = df[df["IsCancellation"]]
         if len(cancellations) > 0:
-            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
-            cancellations_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "Cancellations.tsv")
+            processed_dir = os.path.dirname(self.config.processed_data_path)
+            os.makedirs(processed_dir, exist_ok=True)
+            cancellations_path = os.path.join(processed_dir, "Cancellations.tsv")
             cancellations.to_csv(cancellations_path, sep="\t", encoding="utf-8", index=False)
             logger.info(f"Saved {len(cancellations)} cancellations to: {cancellations_path}")
         
         # Remove cancellations from main dataframe
         df = df[~df["IsCancellation"]].copy()
         
-        # Convert InvoiceNo to numeric (no need to process cancellations since they're already removed)
-        df["InvoiceNo"] = pd.to_numeric(df["InvoiceNo"], errors="coerce")
         logger.info(f"Removed {len(cancellations)} cancellation entries")
         return df
 
@@ -274,8 +400,9 @@ class DataPipeline:
         missing_customer_id = df[df["CustomerID"].isna()]
         
         if len(missing_customer_id) > 0:
-            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
-            no_customer_id_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "no_CustomerID.tsv")
+            processed_dir = os.path.dirname(self.config.processed_data_path)
+            os.makedirs(processed_dir, exist_ok=True)
+            no_customer_id_path = os.path.join(processed_dir, "no_CustomerID.tsv")
             missing_customer_id.to_csv(no_customer_id_path, sep="\t", encoding="utf-8", index=False)
             logger.info(f"Saved {len(missing_customer_id)} records with missing CustomerID to: {no_customer_id_path}")
 
@@ -302,8 +429,9 @@ class DataPipeline:
         duplicates = df[df.duplicated(subset=["InvoiceNo", "StockCode"], keep=False)]
         
         if len(duplicates) > 0:
-            os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
-            duplicates_path = os.path.join(os.path.dirname(PROCESSED_DATA_PATH), "Duplicate_transactions.tsv")
+            processed_dir = os.path.dirname(self.config.processed_data_path)
+            os.makedirs(processed_dir, exist_ok=True)
+            duplicates_path = os.path.join(processed_dir, "Duplicate_transactions.tsv")
             duplicates.to_csv(duplicates_path, sep="\t", encoding="utf-8", index=False)
             logger.info(f"Saved {len(duplicates)} duplicate transactions to: {duplicates_path}")
         
@@ -346,34 +474,30 @@ class DataPipeline:
         if "Description" not in df.columns:
             return df
 
-        if not ENRICHMENT_ENABLED:
+        if not self.config.enrichment_enabled:
             logger.info("Category enrichment disabled; skipping")
             return df
 
-        # Load cache first before checking it
-        cache = load_json_file(ENRICHMENT_CACHE_PATH) if (ENRICHMENT_CACHE_FIRST and not self.force_reprocess) else {}
-        if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and cache:
-            logger.info(f"Loaded enrichment cache from: {ENRICHMENT_CACHE_PATH} ({len(cache)} entries)")
+        # Load cache with unified helper
+        cache = self._validate_and_load_cache(
+            self.config.cache_config.enrichment_cache_path,
+            self.config.cache_config.enrichment_cache_first,
+            self.force_reprocess,
+        )
 
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-        llm_available = True
-
-        if provider == "openai" and not OPENAI_API_KEY:
-            llm_available = False
-        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-            llm_available = False
-        elif provider == "gemini" and not GEMINI_API_KEY:
-            llm_available = False
-        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-            llm_available = False
-        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-            llm_available = False
+        llm_config = self.config.llm_config
+        provider = llm_config.provider.lower() if llm_config.provider else "openai"
+        
+        # Validate LLM credentials using unified client
+        config = self._build_pipeline_llm_config()
+        client = LLMClient(config)
+        llm_available = client.validate_credentials()
 
         if not llm_available:
             logger.warning(
                 "Category enrichment enabled but provider credentials are missing; skipping enrichment"
             )
-            for field in ENRICHMENT_FIELDS:
+            for field in self.config.enrichment_fields:
                 df[field] = np.nan
             return df
 
@@ -382,14 +506,18 @@ class DataPipeline:
         unique_descriptions = df["Description"].dropna().astype(str).unique()
         enrichment_map: Dict[str, Dict[str, str]] = {}
 
-        logger.info(f"Enriching {len(unique_descriptions)} unique descriptions with {len(ENRICHMENT_FIELDS)} fields (batch_size={ENRICHMENT_BATCH_SIZE})")
+        logger.info(
+            f"Enriching {len(unique_descriptions)} unique descriptions "
+            f"with {len(self.config.enrichment_fields)} fields "
+            f"(batch_size={self.config.enrichment_batch_size})"
+        )
 
         # Separate cached and uncached descriptions
         descriptions_to_enrich = []
         cache_hits = 0
         
         for desc in unique_descriptions:
-            if ENRICHMENT_CACHE_FIRST and not self.force_reprocess and desc in cache:
+            if self.config.cache_config.enrichment_cache_first and not self.force_reprocess and desc in cache:
                 enrichment_map[desc] = cache[desc]
                 cache_hits += 1
             else:
@@ -403,54 +531,43 @@ class DataPipeline:
             try:
                 batch_results = enrich_categories_batch_with_llm(
                     texts=descriptions_to_enrich,
-                    fields=ENRICHMENT_FIELDS,
+                    fields=self.config.enrichment_fields,
                     provider=provider,
-                    model=LLM_MODEL,
-                    temperature=LLM_TEMPERATURE,
-                    max_tokens=LLM_MAX_TOKENS,
-                    timeout_seconds=LLM_TIMEOUT_SECONDS,
-                    batch_size=ENRICHMENT_BATCH_SIZE,
-                    api_key=(
-                        OPENAI_API_KEY
-                        if provider == "openai"
-                        else AZURE_OPENAI_API_KEY
-                        if provider == "azure"
-                        else GEMINI_API_KEY
-                        if provider == "gemini"
-                        else ANTHROPIC_API_KEY
-                        if provider == "anthropic"
-                        else PERPLEXITY_API_KEY
-                    ),
-                    endpoint=AZURE_OPENAI_ENDPOINT,
-                    deployment=AZURE_OPENAI_DEPLOYMENT,
-                    api_version=AZURE_OPENAI_API_VERSION,
-                    base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                    model=llm_config.model,
+                    temperature=llm_config.temperature,
+                    max_tokens=llm_config.max_tokens,
+                    timeout_seconds=llm_config.timeout_seconds,
+                    batch_size=self.config.enrichment_batch_size,
+                    api_key=self._get_api_key_for_provider(provider),
+                    endpoint=llm_config.azure_endpoint,
+                    deployment=llm_config.azure_deployment,
+                    api_version=llm_config.azure_api_version,
+                    base_url=self._get_base_url_for_provider(provider),
                 )
                 enrichment_map.update(batch_results)
                 
                 # Update cache with new results
-                if ENRICHMENT_CACHE_FIRST:
+                if self.config.cache_config.enrichment_cache_first:
                     for desc, enriched in batch_results.items():
                         cache[desc] = enriched
-                    save_json_file(ENRICHMENT_CACHE_PATH, cache)
-                    logger.info(f"Saved enrichment cache to: {ENRICHMENT_CACHE_PATH} ({len(cache)} total entries)")
+                    save_json_file(self.config.cache_config.enrichment_cache_path, cache)
+                    logger.info(
+                        f"Saved enrichment cache to: {self.config.cache_config.enrichment_cache_path} ({len(cache)} total entries)"
+                    )
                     
             except LLMQuotaExceededError as exc:
-                logger.warning(
-                    "LLM quota exceeded during batch enrichment; filling remaining with NaN"
-                )
-                logger.debug(f"Quota error detail: {exc}")
+                self._handle_llm_quota_error_standardized(exc, fallback_strategy="fill_nan")
                 # Fill remaining descriptions with NaN
                 for desc in descriptions_to_enrich:
                     if desc not in enrichment_map:
-                        enrichment_map[desc] = {field: "NaN" for field in ENRICHMENT_FIELDS}
+                        enrichment_map[desc] = {field: "NaN" for field in self.config.enrichment_fields}
         elif descriptions_to_enrich:
             # LLM not available, fill with NaN
             for desc in descriptions_to_enrich:
-                enrichment_map[desc] = {field: "NaN" for field in ENRICHMENT_FIELDS}
+                enrichment_map[desc] = {field: "NaN" for field in self.config.enrichment_fields}
 
         # Add enrichment columns to dataframe
-        for field in ENRICHMENT_FIELDS:
+        for field in self.config.enrichment_fields:
             # Create a mapping function that returns None instead of "NaN" string
             def get_field_value(desc, field_name=field):
                 enrichment = enrichment_map.get(desc, {})
@@ -460,7 +577,7 @@ class DataPipeline:
             # Apply mapping and handle None values properly
             df[field] = df["Description"].apply(get_field_value)
 
-        logger.info(f"Category enrichment complete; added columns: {ENRICHMENT_FIELDS}")
+        logger.info(f"Category enrichment complete; added columns: {self.config.enrichment_fields}")
         return df
 
     def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -486,10 +603,10 @@ class DataPipeline:
         """
         """Create derived features and standardize data."""
         df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
-        df["InvoiceSeason"] = df["InvoiceDate"].dt.month % 12 // 3 + 1 
-        df["InvoiceDayOfWeek"] = df["InvoiceDate"].dt.dayofweek + 1
+        df["InvoiceSeason"] = df["InvoiceDate"].dt.month % 12 // 3 + 1  # type: ignore[attr-defined]
+        df["InvoiceDayOfWeek"] = df["InvoiceDate"].dt.dayofweek + 1  # type: ignore[attr-defined]
         df["TransactionValue"] = df["Quantity"] * df["UnitPrice"]
-        if not NORMALIZATION_ENABLED:
+        if not self.config.normalization_enabled:
             df["Description"] = df["Description"].str.strip().str.lower()
         return df
 
@@ -506,11 +623,11 @@ class DataPipeline:
         df["anomaly_type"] = None
         df["anomaly_reason"] = None
 
-        if not OUTLIER_ENABLED:
+        if not self.config.outlier_enabled:
             logger.info("Outlier detection disabled; skipping")
             return df
 
-        numeric_fields = [field for field in OUTLIER_FIELDS if field in df.columns]
+        numeric_fields = [field for field in self.config.outlier_fields if field in df.columns]
         if not numeric_fields:
             logger.warning("Outlier detection enabled but no numeric fields available")
             return df
@@ -519,7 +636,7 @@ class DataPipeline:
         index_reasons: Dict[int, List[str]] = {}
 
         for field in numeric_fields:
-            lower, upper = compute_iqr_bounds(df[field], OUTLIER_IQR_MULTIPLIER)
+            lower, upper = compute_iqr_bounds(df[field], self.config.outlier_iqr_multiplier)
             mask = df[field].notna() & ((df[field] < lower) | (df[field] > upper))
             for idx in df[mask].index:
                 outlier_indices.add(idx)
@@ -529,26 +646,22 @@ class DataPipeline:
             logger.info("No IQR outliers detected")
             return df
 
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-        llm_available = True
-
-        if provider == "openai" and not OPENAI_API_KEY:
-            llm_available = False
-        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-            llm_available = False
-        elif provider == "gemini" and not GEMINI_API_KEY:
-            llm_available = False
-        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-            llm_available = False
-        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-            llm_available = False
+        llm_config = self.config.llm_config
+        provider = llm_config.provider.lower() if llm_config.provider else "openai"
+        
+        # Validate LLM credentials using unified client
+        config = self._build_pipeline_llm_config()
+        client = LLMClient(config)
+        llm_available = client.validate_credentials()
 
         if not llm_available:
             logger.warning("Outlier detection enabled but provider credentials are missing; using heuristic labels")
 
-        cache = load_json_file(OUTLIER_CACHE_PATH) if (OUTLIER_CACHE_FIRST and not self.force_reprocess) else {}
-        if OUTLIER_CACHE_FIRST and not self.force_reprocess and cache:
-            logger.info(f"Loaded outlier cache from: {OUTLIER_CACHE_PATH} ({len(cache)} entries)")
+        cache = self._validate_and_load_cache(
+            self.config.cache_config.outlier_cache_path,
+            self.config.cache_config.outlier_cache_first,
+            self.force_reprocess,
+        )
         cache_updated = False
 
         def _record_key(row: pd.Series) -> str:
@@ -575,7 +688,7 @@ class DataPipeline:
 
         for _, row in candidates.iterrows():
             key = row["_record_key"]
-            if OUTLIER_CACHE_FIRST and not self.force_reprocess and key in cache:
+            if self.config.cache_config.outlier_cache_first and not self.force_reprocess and key in cache:
                 results[key] = cache[key]
                 continue
 
@@ -594,36 +707,25 @@ class DataPipeline:
             pending_keys.append(key)
 
         if llm_available and pending_records:
-            for i in range(0, len(pending_records), OUTLIER_BATCH_SIZE):
-                batch = pending_records[i : i + OUTLIER_BATCH_SIZE]
+            for i in range(0, len(pending_records), self.config.outlier_batch_size):
+                batch = pending_records[i : i + self.config.outlier_batch_size]
                 try:
                     batch_results = batch_score_anomalies_with_llm(
                         records=batch,
                         provider=provider,
-                        model=LLM_MODEL,
-                        temperature=LLM_TEMPERATURE,
-                        max_tokens=LLM_MAX_TOKENS,
-                        timeout_seconds=LLM_TIMEOUT_SECONDS,
-                        api_key=(
-                            OPENAI_API_KEY
-                            if provider == "openai"
-                            else AZURE_OPENAI_API_KEY
-                            if provider == "azure"
-                            else GEMINI_API_KEY
-                            if provider == "gemini"
-                            else ANTHROPIC_API_KEY
-                            if provider == "anthropic"
-                            else PERPLEXITY_API_KEY
-                        ),
-                        endpoint=AZURE_OPENAI_ENDPOINT,
-                        deployment=AZURE_OPENAI_DEPLOYMENT,
-                        api_version=AZURE_OPENAI_API_VERSION,
-                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                        model=llm_config.model,
+                        temperature=llm_config.temperature,
+                        max_tokens=llm_config.max_tokens,
+                        timeout_seconds=llm_config.timeout_seconds,
+                        api_key=self._get_api_key_for_provider(provider),
+                        endpoint=llm_config.azure_endpoint,
+                        deployment=llm_config.azure_deployment,
+                        api_version=llm_config.azure_api_version,
+                        base_url=self._get_base_url_for_provider(provider),
                     )
                 except LLMQuotaExceededError as exc:
                     llm_available = False
-                    logger.warning("LLM quota exceeded; skipping remaining outlier batches")
-                    logger.debug(f"Quota error detail: {exc}")
+                    self._handle_llm_quota_error_standardized(exc, fallback_strategy="use_heuristic")
                     batch_results = {}
                     results.update(batch_results)
                     break
@@ -651,26 +753,28 @@ class DataPipeline:
         for idx, row in candidates.iterrows():
             key = row["_record_key"]
             result = results.get(key, {})
-            df.at[idx, "check_anomaly"] = True
-            df.at[idx, "anomaly_type"] = result.get("anomaly_type", "none")
-            df.at[idx, "anomaly_reason"] = result.get("anomaly_reason", row.get("_outlier_reasons", ""))
+            df.at[idx, "check_anomaly"] = True  # type: ignore[call-overload]
+            df.at[idx, "anomaly_type"] = result.get("anomaly_type", "none")  # type: ignore[call-overload]
+            df.at[idx, "anomaly_reason"] = result.get("anomaly_reason", row.get("_outlier_reasons", ""))  # type: ignore[call-overload]
 
-            if OUTLIER_CACHE_FIRST:
+            if self.config.cache_config.outlier_cache_first:
                 cache[key] = {
-                    "anomaly_type": df.at[idx, "anomaly_type"],
-                    "anomaly_reason": df.at[idx, "anomaly_reason"],
+                    "anomaly_type": df.at[idx, "anomaly_type"],  # type: ignore[index]
+                    "anomaly_reason": df.at[idx, "anomaly_reason"],  # type: ignore[index]
                 }
                 cache_updated = True
 
-        if OUTLIER_CACHE_FIRST and cache_updated:
-            save_json_file(OUTLIER_CACHE_PATH, cache)
-            logger.info(f"Saved outlier cache to: {OUTLIER_CACHE_PATH} ({len(cache)} entries)")
+        if self.config.cache_config.outlier_cache_first and cache_updated:
+            save_json_file(self.config.cache_config.outlier_cache_path, cache)
+            logger.info(f"Saved outlier cache to: {self.config.cache_config.outlier_cache_path} ({len(cache)} entries)")
 
         anomalies = df[df["check_anomaly"]]
         if len(anomalies) > 0:
-            os.makedirs(os.path.dirname(OUTLIER_OUTPUT_PATH), exist_ok=True)
-            anomalies.to_csv(OUTLIER_OUTPUT_PATH, sep="\t", encoding="utf-8", index=False)
-            logger.info(f"Saved {len(anomalies)} suspicious transactions to: {OUTLIER_OUTPUT_PATH}")
+            os.makedirs(os.path.dirname(self.config.outlier_output_path), exist_ok=True)
+            anomalies.to_csv(self.config.outlier_output_path, sep="\t", encoding="utf-8", index=False)
+            logger.info(
+                f"Saved {len(anomalies)} suspicious transactions to: {self.config.outlier_output_path}"
+            )
 
         logger.info(f"Flagged {len(anomalies)} suspicious transactions")
         return df
@@ -688,30 +792,26 @@ class DataPipeline:
         if "Description" not in df.columns:
             return df
 
-        if not CONTEXT_ENABLED:
+        if not self.config.context_enabled:
             logger.info("Context extraction disabled; skipping")
             return df
 
-        cache = load_json_file(CONTEXT_CACHE_PATH) if (CONTEXT_CACHE_FIRST and not self.force_reprocess) else {}
-        if CONTEXT_CACHE_FIRST and not self.force_reprocess and cache:
-            logger.info(f"Loaded context cache from: {CONTEXT_CACHE_PATH} ({len(cache)} entries)")
+        cache = self._validate_and_load_cache(
+            self.config.cache_config.context_cache_path,
+            self.config.cache_config.context_cache_first,
+            self.force_reprocess,
+        )
         cache_updated = False
         cache_hits = 0
         cache_misses = 0
 
-        provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-        llm_available = True
-
-        if provider == "openai" and not OPENAI_API_KEY:
-            llm_available = False
-        elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-            llm_available = False
-        elif provider == "gemini" and not GEMINI_API_KEY:
-            llm_available = False
-        elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-            llm_available = False
-        elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-            llm_available = False
+        llm_config = self.config.llm_config
+        provider = llm_config.provider.lower() if llm_config.provider else "openai"
+        
+        # Validate LLM credentials using unified client
+        config = self._build_pipeline_llm_config()
+        client = LLMClient(config)
+        llm_available = client.validate_credentials()
 
         if not llm_available:
             logger.warning(
@@ -728,7 +828,7 @@ class DataPipeline:
         for desc in unique_descriptions:
             cache_key = desc
 
-            if CONTEXT_CACHE_FIRST and not self.force_reprocess and cache_key in cache:
+            if self.config.cache_config.context_cache_first and not self.force_reprocess and cache_key in cache:
                 context_map[desc] = cache[cache_key]
                 cache_hits += 1
                 continue
@@ -737,47 +837,39 @@ class DataPipeline:
                 try:
                     result = extract_contexts_with_llm(
                         text=desc,
-                        max_contexts=CONTEXT_MAX_CONTEXTS,
+                        max_contexts=self.config.context_max_contexts,
                         provider=provider,
-                        model=LLM_MODEL,
-                        temperature=LLM_TEMPERATURE,
-                        max_tokens=LLM_MAX_TOKENS,
-                        timeout_seconds=LLM_TIMEOUT_SECONDS,
-                        api_key=(
-                            OPENAI_API_KEY
-                            if provider == "openai"
-                            else AZURE_OPENAI_API_KEY
-                            if provider == "azure"
-                            else GEMINI_API_KEY
-                            if provider == "gemini"
-                            else ANTHROPIC_API_KEY
-                            if provider == "anthropic"
-                            else PERPLEXITY_API_KEY
-                        ),
-                        endpoint=AZURE_OPENAI_ENDPOINT,
-                        deployment=AZURE_OPENAI_DEPLOYMENT,
-                        api_version=AZURE_OPENAI_API_VERSION,
-                        base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                        model=llm_config.model,
+                        temperature=llm_config.temperature,
+                        max_tokens=llm_config.max_tokens,
+                        timeout_seconds=llm_config.timeout_seconds,
+                        api_key=self._get_api_key_for_provider(provider),
+                        endpoint=llm_config.azure_endpoint,
+                        deployment=llm_config.azure_deployment,
+                        api_version=llm_config.azure_api_version,
+                        base_url=self._get_base_url_for_provider(provider),
                     )
                     cache_misses += 1
                 except LLMQuotaExceededError as exc:
                     llm_available = False
-                    logger.warning(
-                        "LLM quota exceeded; skipping remaining context extraction calls for this run"
+                    self._handle_llm_quota_error_standardized(
+                        exc,
+                        fallback_strategy="skip_batch",
                     )
-                    logger.debug(f"Quota error detail: {exc}")
                     result = {"contexts": []}
             else:
                 result = {"contexts": []}
 
             context_map[desc] = result
-            if CONTEXT_CACHE_FIRST:
+            if self.config.cache_config.context_cache_first:
                 cache[cache_key] = result
                 cache_updated = True
 
-        if CONTEXT_CACHE_FIRST and cache_updated:
-            save_json_file(CONTEXT_CACHE_PATH, cache)
-            logger.info(f"Saved context cache to: {CONTEXT_CACHE_PATH} ({cache_hits} hits, {cache_misses} misses)")
+        if self.config.cache_config.context_cache_first and cache_updated:
+            save_json_file(self.config.cache_config.context_cache_path, cache)
+            logger.info(
+                f"Saved context cache to: {self.config.cache_config.context_cache_path} ({cache_hits} hits, {cache_misses} misses)"
+            )
 
         # Add contexts column (comma-separated context strings, filtered by min_confidence)
         def extract_filtered_contexts(desc):
@@ -788,7 +880,7 @@ class DataPipeline:
             filtered = [
                 ctx.get("context", "")
                 for ctx in contexts
-                if isinstance(ctx, dict) and ctx.get("confidence", 0) >= CONTEXT_MIN_CONFIDENCE
+                if isinstance(ctx, dict) and ctx.get("confidence", 0) >= self.config.context_min_confidence
             ]
             
             return ", ".join(filtered)
@@ -854,10 +946,11 @@ class DataPipeline:
 
         baskets = baskets.merge(invoice_data, left_on="InvoiceNo", right_index=True)
 
-        # Filter baskets with at least 2 items using vectorized operation
-        # Convert list lengths to series once (O(n) operation)
+        # In mixed datasets keep all invoices; in all-single datasets return empty baskets.
+        # This preserves invoice-level metadata while avoiding bundle mining on single-item-only data.
         basket_sizes = baskets["Items"].str.len()
-        baskets = baskets[basket_sizes >= 2]
+        if (basket_sizes > 1).sum() == 0:
+            baskets = baskets.iloc[0:0].copy()
 
         logger.info(f"Created {len(baskets)} transaction baskets with multiple items")
         self.transactions = baskets
@@ -865,7 +958,10 @@ class DataPipeline:
         return baskets
 
     def generate_product_bundles(
-        self, min_support: float = MIN_SUPPORT, min_confidence: float = MIN_CONFIDENCE, max_size: int = MAX_BUNDLE_SIZE
+        self,
+        min_support: Optional[float] = None,
+        min_confidence: Optional[float] = None,
+        max_size: Optional[int] = None,
     ) -> List[Tuple]:
         """
         Generate product bundles using frequent itemset analysis (Apriori-like approach).
@@ -882,8 +978,12 @@ class DataPipeline:
         if self.transactions is None:
             raise ValueError("Transaction baskets not created. Call create_transaction_baskets first.")
 
+        min_support_value = min_support if min_support is not None else self.config.min_support
+        min_confidence_value = min_confidence if min_confidence is not None else self.config.min_confidence
+        max_size_value = max_size if max_size is not None else self.config.max_bundle_size
+
         logger.info(
-            f"Generating bundles (min_support={min_support}, min_confidence={min_confidence}, max_size={max_size})..."
+            f"Generating bundles (min_support={min_support_value}, min_confidence={min_confidence_value}, max_size={max_size_value})..."
         )
 
         # Get all items and create item-to-index mapping
@@ -895,10 +995,10 @@ class DataPipeline:
         frequent_items = {
             item: count
             for item, count in item_counts.items()
-            if count / total_transactions >= min_support
+            if count / total_transactions >= min_support_value
         }
 
-        logger.info(f"Found {len(frequent_items)} frequent items (support >= {min_support})")
+        logger.info(f"Found {len(frequent_items)} frequent items (support >= {min_support_value})")
 
         # Create item-to-index mapping for matrix operations
         item_to_idx = {item: idx for idx, item in enumerate(frequent_items.keys())}
@@ -913,13 +1013,13 @@ class DataPipeline:
                 if item in item_to_idx:
                     transaction_matrix[trans_idx, item_to_idx[item]] = 1
 
-        support_threshold = min_support * total_transactions
+        support_threshold = min_support_value * total_transactions
 
         # Generate itemsets of increasing size
         bundles = []
         current_itemsets = [[item] for item in frequent_items.keys()]
 
-        for size in range(2, max_size + 1):
+        for size in range(2, max_size_value + 1):
             # Generate candidate itemsets using Apriori principle
             candidates_set = set()
             
@@ -966,7 +1066,7 @@ class DataPipeline:
                     bundles.append(tuple(candidate))
                     valid_count += 1
 
-            logger.info(f"Found {valid_count} frequent itemsets of size {size} (support >= {min_support:.4f})")
+            logger.info(f"Found {valid_count} frequent itemsets of size {size} (support >= {min_support_value:.4f})")
             
             current_itemsets = [list(itemset) for itemset in valid_itemsets]
 
@@ -979,7 +1079,7 @@ class DataPipeline:
 
         return bundles
 
-    def save_processed_data(self, filepath: str = PROCESSED_DATA_PATH) -> bool:
+    def save_processed_data(self, filepath: Optional[str] = None) -> bool:
         """
         Save processed data to pickle file and a copy to TSV.
 
@@ -990,8 +1090,9 @@ class DataPipeline:
             bool: True if successful
         """
         try:
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            with open(filepath, "wb") as f:
+            output_filepath = filepath or self.config.processed_data_path
+            os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
+            with open(output_filepath, "wb") as f:
                 pickle.dump(
                     {
                         "processed_data": self.processed_data,
@@ -1001,12 +1102,12 @@ class DataPipeline:
                     },
                     f,
                 )
-            logger.info(f"Processed data saved to: {filepath}")
+            logger.info(f"Processed data saved to: {output_filepath}")
 
             # Also save a copy as TSV for easier inspection
-            tsv_filepath = os.path.splitext(filepath)[0] + ".tsv"
+            tsv_filepath = os.path.splitext(output_filepath)[0] + ".tsv"
             try:
-                self.processed_data.to_csv(tsv_filepath, sep="\t", index=False)
+                self.processed_data.to_csv(tsv_filepath, sep="\t", index=False)  # type: ignore[union-attr]
                 logger.info(f"Processed data also saved to TSV: {tsv_filepath}")
             except Exception as e:
                 logger.error(f"Failed to save processed data as TSV: {e}")
@@ -1016,7 +1117,7 @@ class DataPipeline:
             logger.error(f"Failed to save processed data: {e}")
             return False
 
-    def load_processed_data(self, filepath: str = PROCESSED_DATA_PATH) -> bool:
+    def load_processed_data(self, filepath: Optional[str] = None) -> bool:
         """
         Load processed data from pickle file.
 
@@ -1026,14 +1127,20 @@ class DataPipeline:
         Returns:
             bool: True if successful
         """
+        input_filepath = filepath or self.config.processed_data_path
+        if not os.path.exists(input_filepath):
+            raise FileNotFoundError(f"Processed data file not found: {input_filepath}")
+
         try:
-            with open(filepath, "rb") as f:
+            with open(input_filepath, "rb") as f:
                 data = pickle.load(f)
             self.processed_data = data["processed_data"]
             self.transactions = data["transactions"]
             self.bundles = data["bundles"]
-            logger.info(f"Processed data loaded from: {filepath}")
+            logger.info(f"Processed data loaded from: {input_filepath}")
             return True
+        except FileNotFoundError:
+            raise
         except Exception as e:
             logger.error(f"Failed to load processed data: {e}")
             return False
@@ -1055,6 +1162,7 @@ class DataPipeline:
             "min_bundle_size": min(bundle_sizes),
             "max_bundle_size": max(bundle_sizes),
             "avg_bundle_size": np.mean(bundle_sizes),
+            "bundle_sizes": bundle_sizes,
             "bundle_size_distribution": pd.Series(bundle_sizes).value_counts().to_dict(),
             "top_10_bundles": self.bundles[:10],
         }

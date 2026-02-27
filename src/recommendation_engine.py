@@ -22,11 +22,9 @@ from sklearn.metrics import (
 )
 
 from src.config import (
-    RANDOM_STATE,
-    TRAIN_TEST_SPLIT,
-    N_JOBS,
-    SVM_KERNEL,
-    SVM_C,
+    EngineConfig,
+    PipelineConfig,
+    load_config,
     OOS_ENABLED,
     OOS_CACHE_FIRST,
     OOS_CACHE_PATH,
@@ -48,6 +46,7 @@ from src.config import (
     PERPLEXITY_API_KEY,
     PERPLEXITY_BASE_URL,
 )
+from src.llm_client import LLMConfig, LLMClient
 from src.data_splitter import RandomSplit, KFoldSplit, BundleDataPreprocessor
 from src.utils import (
     load_inventory_csv,
@@ -65,8 +64,25 @@ logger = logging.getLogger(__name__)
 class BaseRecommender(ABC):
     """Base class for bundle recommenders."""
 
-    def __init__(self, name: str = "BaseRecommender"):
+    def __init__(
+        self,
+        name: str = "BaseRecommender",
+        config: Optional[EngineConfig] = None,
+        default_validation_split: Optional[float] = None,
+    ):
         """Initialize base recommender."""
+        if config is None or default_validation_split is None:
+            loaded_pipeline, loaded_engine, _, _, _ = load_config()
+            self.config = config or loaded_engine
+            self.default_validation_split = (
+                default_validation_split
+                if default_validation_split is not None
+                else loaded_pipeline.train_test_split
+            )
+        else:
+            self.config = config
+            self.default_validation_split = default_validation_split
+
         self.name = name
         self.model = None
         self.feature_encoder = None
@@ -113,32 +129,46 @@ class BaseRecommender(ABC):
         return filtered_transactions, num_filtered
 
     @abstractmethod
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        """Fit the model."""
+    def fit(
+        self,
+        transactions: List[List[str]],
+        bundles: List[Tuple[str, ...]],
+        validation_split: Optional[float] = None,
+    ) -> Dict:
+        """Fit the model with transactions and bundles."""
         pass
 
     @abstractmethod
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        """Make predictions."""
+    def predict(self, transactions: List[List[str]]) -> np.ndarray:
+        """Make predictions from transactions."""
         pass
 
     @abstractmethod
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """Predict probabilities."""
+    def predict_proba(self, transactions: List[List[str]]) -> np.ndarray:
+        """Predict probabilities from transactions."""
         pass
 
 
 class NaiveBayesBundleRecommender(BaseRecommender):
     """Bundle recommender using Naive Bayes algorithm."""
 
-    def __init__(self, model_type: str = "multinomial"):
+    def __init__(
+        self,
+        model_type: str = "multinomial",
+        config: Optional[EngineConfig] = None,
+        default_validation_split: Optional[float] = None,
+    ):
         """
         Initialize Naive Bayes recommender.
 
         Args:
             model_type: 'multinomial' or 'gaussian'
         """
-        super().__init__(name="NaiveBayesBundleRecommender")
+        super().__init__(
+            name="NaiveBayesBundleRecommender",
+            config=config,
+            default_validation_split=default_validation_split,
+        )
         self.model_type = model_type
 
         if model_type == "multinomial":
@@ -155,7 +185,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         self,
         transactions: List[List[str]],
         bundles: List[Tuple[str, ...]],
-        validation_split: float = TRAIN_TEST_SPLIT,
+        validation_split: Optional[float] = None,
     ) -> Dict:
         """
         Fit the Naive Bayes model using random train-test split.
@@ -169,6 +199,10 @@ class NaiveBayesBundleRecommender(BaseRecommender):
             dict: Training metrics
         """
         logger.info(f"Fitting {self.name} with random split...")
+
+        validation_split_value = (
+            validation_split if validation_split is not None else self.default_validation_split
+        )
 
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
@@ -185,7 +219,10 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=1 - validation_split, random_state=RANDOM_STATE
+            X,
+            y,
+            test_size=1 - validation_split_value,
+            random_state=self.config.random_state,
         )
 
         # Handle dense/sparse for Gaussian NB
@@ -276,7 +313,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
             all_metrics.append(metrics)
 
         # Use the last model as the fitted model
-        self.model = model
+        self.model = model  # type: ignore[possibly-unbound]
         self.is_fitted = True
 
         # Average metrics across splits
@@ -311,7 +348,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         X = self.mlb.transform(transactions)
         if self.model_type == "gaussian":
             if hasattr(X, "toarray"):
-                X = X.toarray()
+                X = X.toarray()  # type: ignore[union-attr]
 
         return self.model.predict(X)
 
@@ -336,7 +373,7 @@ class NaiveBayesBundleRecommender(BaseRecommender):
         X = self.mlb.transform(filtered_transactions)
         if self.model_type == "gaussian":
             if hasattr(X, "toarray"):
-                X = X.toarray()
+                X = X.toarray()  # type: ignore[union-attr]
 
         return self.model.predict_proba(X)
 
@@ -344,7 +381,13 @@ class NaiveBayesBundleRecommender(BaseRecommender):
 class SVMBundleRecommender(BaseRecommender):
     """Bundle recommender using Support Vector Machine algorithm."""
 
-    def __init__(self, kernel: str = "linear", C: float = 1.0):
+    def __init__(
+        self,
+        kernel: Optional[str] = None,
+        C: Optional[float] = None,
+        config: Optional[EngineConfig] = None,
+        default_validation_split: Optional[float] = None,
+    ):
         """
         Initialize SVM recommender.
 
@@ -352,10 +395,19 @@ class SVMBundleRecommender(BaseRecommender):
             kernel: SVM kernel type ('linear', 'rbf', 'poly', etc.)
             C: Regularization parameter
         """
-        super().__init__(name="SVMBundleRecommender")
-        self.kernel = kernel
-        self.C = C
-        self.model = SVC(kernel=kernel, C=C, probability=True, random_state=RANDOM_STATE)
+        super().__init__(
+            name="SVMBundleRecommender",
+            config=config,
+            default_validation_split=default_validation_split,
+        )
+        self.kernel = kernel if kernel is not None else self.config.svm_kernel
+        self.C = C if C is not None else self.config.svm_c
+        self.model = SVC(
+            kernel=self.kernel,
+            C=self.C,
+            probability=True,
+            random_state=self.config.random_state,
+        )  # type: ignore[arg-type]
         self.mlb = MultiLabelBinarizer()
         self.scaler = StandardScaler()
         self.feature_names = None
@@ -365,7 +417,7 @@ class SVMBundleRecommender(BaseRecommender):
         self,
         transactions: List[List[str]],
         bundles: List[Tuple[str, ...]],
-        validation_split: float = TRAIN_TEST_SPLIT,
+        validation_split: Optional[float] = None,
     ) -> Dict:
         """
         Fit the SVM model using random train-test split.
@@ -380,13 +432,17 @@ class SVMBundleRecommender(BaseRecommender):
         """
         logger.info(f"Fitting {self.name} with kernel={self.kernel}, C={self.C} using random split...")
 
+        validation_split_value = (
+            validation_split if validation_split is not None else self.default_validation_split
+        )
+
         # Prepare features and labels
         X = self.mlb.fit_transform(transactions)
         self.feature_names = self.mlb.classes_
         self.known_classes = set(self.mlb.classes_)  # Store for filtering in predict
 
         # Convert to dense and scale
-        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_dense = X.toarray() if hasattr(X, "toarray") else X  # type: ignore[union-attr]
         X_scaled = self.scaler.fit_transform(X_dense)
 
         # Create binary labels for each bundle
@@ -399,7 +455,10 @@ class SVMBundleRecommender(BaseRecommender):
 
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=1 - validation_split, random_state=RANDOM_STATE
+            X_scaled,
+            y,
+            test_size=1 - validation_split_value,
+            random_state=self.config.random_state,
         )
 
         # Fit model
@@ -443,7 +502,7 @@ class SVMBundleRecommender(BaseRecommender):
         self.known_classes = set(self.mlb.classes_)  # Store for filtering in predict
 
         # Convert to dense and scale
-        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_dense = X.toarray() if hasattr(X, "toarray") else X  # type: ignore[union-attr]
         X_scaled = self.scaler.fit_transform(X_dense)
 
         # Create binary labels for each bundle
@@ -461,10 +520,10 @@ class SVMBundleRecommender(BaseRecommender):
 
             # Fit model
             model = SVC(
-                kernel=self.kernel,
+                kernel=self.kernel,  # type: ignore[arg-type]
                 C=self.C,
                 probability=True,
-                random_state=RANDOM_STATE,
+                random_state=self.config.random_state,
             )
             model.fit(X_train, y_train)
 
@@ -479,7 +538,7 @@ class SVMBundleRecommender(BaseRecommender):
             all_metrics.append(metrics)
 
         # Use the last model as the fitted model
-        self.model = model
+        self.model = model  # type: ignore[possibly-unbound]
         self.is_fitted = True
 
         # Average metrics across splits
@@ -512,7 +571,7 @@ class SVMBundleRecommender(BaseRecommender):
             raise ValueError("Model not fitted. Call fit() first.")
 
         X = self.mlb.transform(transactions)
-        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_dense = X.toarray() if hasattr(X, "toarray") else X  # type: ignore[union-attr]
         X_scaled = self.scaler.transform(X_dense)
         return self.model.predict(X_scaled)
 
@@ -535,7 +594,7 @@ class SVMBundleRecommender(BaseRecommender):
             logger.debug(f"{self.name}: Removed {num_filtered} unknown product(s) before prediction")
 
         X = self.mlb.transform(filtered_transactions)
-        X_dense = X.toarray() if hasattr(X, "toarray") else X
+        X_dense = X.toarray() if hasattr(X, "toarray") else X  # type: ignore[union-attr]
         X_scaled = self.scaler.transform(X_dense)
         return self.model.predict_proba(X_scaled)
 
@@ -543,12 +602,49 @@ class SVMBundleRecommender(BaseRecommender):
 class BundleRecommendationEngine:
     """Main bundle recommendation engine."""
 
-    def __init__(self):
-        """Initialize the recommendation engine."""
+    def __init__(
+        self,
+        engine_config: Optional[EngineConfig] = None,
+        pipeline_config: Optional[PipelineConfig] = None,
+    ):
+        """Initialize the recommendation engine.
+
+        Args:
+            engine_config: Optional typed engine configuration.
+            pipeline_config: Optional typed pipeline configuration for OOS/LLM settings.
+        """
+        if engine_config is None or pipeline_config is None:
+            loaded_pipeline, loaded_engine, _, _, _ = load_config()
+            self.engine_config = engine_config or loaded_engine
+            self.pipeline_config = pipeline_config or loaded_pipeline
+        else:
+            self.engine_config = engine_config
+            self.pipeline_config = pipeline_config
+
         self.recommenders = {}
         self.transactions = None
         self.bundles = None
         self.recommendations_cache = {}
+
+    def _get_oos_api_key_for_provider(self, provider: str) -> Optional[str]:
+        """Get API key for the configured OOS LLM provider."""
+        llm_config = self.pipeline_config.llm_config
+        provider_lower = provider.lower()
+        if provider_lower == "openai":
+            return llm_config.openai_api_key
+        if provider_lower == "azure":
+            return llm_config.azure_api_key
+        if provider_lower == "gemini":
+            return llm_config.gemini_api_key
+        if provider_lower == "anthropic":
+            return llm_config.anthropic_api_key
+        if provider_lower == "perplexity":
+            return llm_config.perplexity_api_key
+        return None
+
+    def _is_oos_enabled(self) -> bool:
+        """Resolve OOS enablement with typed config preference and legacy fallback."""
+        return self.pipeline_config.oos_enabled if self.pipeline_config is not None else OOS_ENABLED
 
     def add_recommender(self, name: str, recommender: BaseRecommender) -> None:
         """
@@ -565,7 +661,7 @@ class BundleRecommendationEngine:
         self,
         transactions: List[List[str]],
         bundles: List[Tuple[str, ...]],
-        validation_split: float = TRAIN_TEST_SPLIT,
+        validation_split: Optional[float] = None,
     ) -> Dict[str, Dict]:
         """
         Fit all recommenders using random train-test split.
@@ -580,11 +676,16 @@ class BundleRecommendationEngine:
         """
         self.transactions = transactions
         self.bundles = bundles
+        validation_split_value = (
+            validation_split
+            if validation_split is not None
+            else self.pipeline_config.train_test_split
+        )
 
         metrics = {}
         for name, recommender in self.recommenders.items():
             logger.info(f"Training {name}...")
-            metrics[name] = recommender.fit(transactions, bundles, validation_split)
+            metrics[name] = recommender.fit(transactions, bundles, validation_split_value)
 
         return metrics
 
@@ -649,7 +750,7 @@ class BundleRecommendationEngine:
     def recommend_bundles(
         self,
         customer_transaction: List[str],
-        recommender_name: str = None,
+        recommender_name: Optional[str] = None,
         threshold: float = 0.5,
     ) -> Dict:
         """
@@ -706,8 +807,13 @@ class BundleRecommendationEngine:
             recommendations["bundles"] = applicable_bundles[:5]  # Top 5
 
         # Resolve out-of-stock items with alternatives (LLM-assisted)
-        if OOS_ENABLED and recommendations["bundles"]:
-            inventory = load_inventory_csv(OOS_INVENTORY_PATH)
+        if self._is_oos_enabled() and recommendations["bundles"]:
+            inventory_path = (
+                self.pipeline_config.oos_inventory_path
+                if self.pipeline_config is not None
+                else OOS_INVENTORY_PATH
+            )
+            inventory = load_inventory_csv(inventory_path)
             in_stock_items = set()
             for bundle in recommendations["bundles"]:
                 for item in bundle:
@@ -716,22 +822,63 @@ class BundleRecommendationEngine:
                         in_stock_items.add(item)
 
             candidates = list(in_stock_items)
-            cache = load_json_file(OOS_CACHE_PATH) if OOS_CACHE_FIRST else {}
+            cache_path = (
+                self.pipeline_config.cache_config.oos_cache_path
+                if self.pipeline_config is not None
+                else OOS_CACHE_PATH
+            )
+            cache_first = (
+                self.pipeline_config.cache_config.oos_cache_first
+                if self.pipeline_config is not None
+                else OOS_CACHE_FIRST
+            )
+            cache = load_json_file(cache_path) if cache_first else {}
             cache_updated = False
 
-            provider = LLM_PROVIDER.lower() if LLM_PROVIDER else "openai"
-            llm_available = True
-
-            if provider == "openai" and not OPENAI_API_KEY:
-                llm_available = False
-            elif provider == "azure" and (not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-                llm_available = False
-            elif provider == "gemini" and not GEMINI_API_KEY:
-                llm_available = False
-            elif provider == "anthropic" and not ANTHROPIC_API_KEY:
-                llm_available = False
-            elif provider == "perplexity" and not PERPLEXITY_API_KEY:
-                llm_available = False
+            llm_config = self.pipeline_config.llm_config if self.pipeline_config is not None else None
+            provider = (
+                llm_config.provider.lower()
+                if llm_config is not None and llm_config.provider
+                else (LLM_PROVIDER.lower() if LLM_PROVIDER else "openai")
+            )
+            
+            # Validate LLM credentials using unified client
+            config = LLMConfig(
+                provider=provider,
+                model=llm_config.model if llm_config is not None else LLM_MODEL,
+                temperature=llm_config.temperature if llm_config is not None else LLM_TEMPERATURE,
+                max_tokens=llm_config.max_tokens if llm_config is not None else LLM_MAX_TOKENS,
+                timeout_seconds=(
+                    llm_config.timeout_seconds if llm_config is not None else LLM_TIMEOUT_SECONDS
+                ),
+                openai_api_key=(llm_config.openai_api_key if llm_config is not None else OPENAI_API_KEY),
+                azure_api_key=(
+                    llm_config.azure_api_key if llm_config is not None else AZURE_OPENAI_API_KEY
+                ),
+                azure_endpoint=(
+                    llm_config.azure_endpoint if llm_config is not None else AZURE_OPENAI_ENDPOINT
+                ),
+                azure_deployment=(
+                    llm_config.azure_deployment if llm_config is not None else AZURE_OPENAI_DEPLOYMENT
+                ),
+                azure_api_version=(
+                    llm_config.azure_api_version
+                    if llm_config is not None
+                    else AZURE_OPENAI_API_VERSION
+                ),
+                gemini_api_key=(llm_config.gemini_api_key if llm_config is not None else GEMINI_API_KEY),
+                anthropic_api_key=(
+                    llm_config.anthropic_api_key if llm_config is not None else ANTHROPIC_API_KEY
+                ),
+                perplexity_api_key=(
+                    llm_config.perplexity_api_key if llm_config is not None else PERPLEXITY_API_KEY
+                ),
+                perplexity_base_url=(
+                    llm_config.perplexity_base_url if llm_config is not None else PERPLEXITY_BASE_URL
+                ),
+            )
+            client = LLMClient(config)
+            llm_available = client.validate_credentials()
 
             candidate_hash = hashlib.sha256("|".join(sorted(candidates)).encode("utf-8")).hexdigest()
             resolved_bundles = []
@@ -747,34 +894,53 @@ class BundleRecommendationEngine:
 
                     cache_key = f"{normalized}|{candidate_hash}"
                     alternatives = []
-                    if OOS_CACHE_FIRST and cache_key in cache:
+                    if cache_first and cache_key in cache:
                         alternatives = cache[cache_key].get("alternatives", [])
                     elif llm_available:
                         try:
+                            max_alternatives = (
+                                self.pipeline_config.oos_max_alternatives
+                                if self.pipeline_config is not None
+                                else OOS_MAX_ALTERNATIVES
+                            )
                             alternatives = select_alternatives_with_llm(
                                 missing_item=item,
                                 candidates=candidates,
                                 provider=provider,
-                                model=LLM_MODEL,
-                                temperature=LLM_TEMPERATURE,
-                                max_tokens=LLM_MAX_TOKENS,
-                                timeout_seconds=LLM_TIMEOUT_SECONDS,
-                                max_alternatives=OOS_MAX_ALTERNATIVES,
-                                api_key=(
-                                    OPENAI_API_KEY
-                                    if provider == "openai"
-                                    else AZURE_OPENAI_API_KEY
-                                    if provider == "azure"
-                                    else GEMINI_API_KEY
-                                    if provider == "gemini"
-                                    else ANTHROPIC_API_KEY
-                                    if provider == "anthropic"
-                                    else PERPLEXITY_API_KEY
+                                model=llm_config.model if llm_config is not None else LLM_MODEL,
+                                temperature=(
+                                    llm_config.temperature if llm_config is not None else LLM_TEMPERATURE
                                 ),
-                                endpoint=AZURE_OPENAI_ENDPOINT,
-                                deployment=AZURE_OPENAI_DEPLOYMENT,
-                                api_version=AZURE_OPENAI_API_VERSION,
-                                base_url=PERPLEXITY_BASE_URL if provider == "perplexity" else None,
+                                max_tokens=(
+                                    llm_config.max_tokens if llm_config is not None else LLM_MAX_TOKENS
+                                ),
+                                timeout_seconds=(
+                                    llm_config.timeout_seconds
+                                    if llm_config is not None
+                                    else LLM_TIMEOUT_SECONDS
+                                ),
+                                max_alternatives=max_alternatives,
+                                api_key=self._get_oos_api_key_for_provider(provider),
+                                endpoint=(
+                                    llm_config.azure_endpoint
+                                    if llm_config is not None
+                                    else AZURE_OPENAI_ENDPOINT
+                                ),
+                                deployment=(
+                                    llm_config.azure_deployment
+                                    if llm_config is not None
+                                    else AZURE_OPENAI_DEPLOYMENT
+                                ),
+                                api_version=(
+                                    llm_config.azure_api_version
+                                    if llm_config is not None
+                                    else AZURE_OPENAI_API_VERSION
+                                ),
+                                base_url=(
+                                    llm_config.perplexity_base_url
+                                    if llm_config is not None and provider == "perplexity"
+                                    else (PERPLEXITY_BASE_URL if provider == "perplexity" else None)
+                                ),
                             )
                         except LLMQuotaExceededError as exc:
                             llm_available = False
@@ -790,7 +956,12 @@ class BundleRecommendationEngine:
                     if alternatives:
                         best = max(alternatives, key=lambda a: float(a.get("score", 0)))
 
-                    if best and float(best.get("score", 0)) >= OOS_MIN_SCORE:
+                    min_score = (
+                        self.pipeline_config.oos_min_score
+                        if self.pipeline_config is not None
+                        else OOS_MIN_SCORE
+                    )
+                    if best and float(best.get("score", 0)) >= min_score:
                         resolved_bundle[idx] = best.get("item")
                         bundle_subs.append(
                             {
@@ -801,7 +972,7 @@ class BundleRecommendationEngine:
                             }
                         )
 
-                    if OOS_CACHE_FIRST:
+                    if cache_first:
                         cache[cache_key] = {"alternatives": alternatives}
                         cache_updated = True
 
@@ -818,8 +989,8 @@ class BundleRecommendationEngine:
             recommendations["bundles"] = resolved_bundles
             recommendations["bundle_substitutions"] = substitutions
 
-            if OOS_CACHE_FIRST and cache_updated:
-                save_json_file(OOS_CACHE_PATH, cache)
+            if cache_first and cache_updated:
+                save_json_file(cache_path, cache)
 
         return recommendations
 
@@ -827,7 +998,7 @@ class BundleRecommendationEngine:
         self,
         customer_transaction: List[str],
         top_n: int = 5,
-        recommender_name: str = None,
+        recommender_name: Optional[str] = None,
     ) -> List[Tuple[str, float]]:
         """
         Get cross-sell product recommendations.

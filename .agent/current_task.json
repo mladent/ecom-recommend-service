@@ -1,0 +1,36 @@
+{
+  "task_id": "default-repo-guard",
+  "objective": "Allow safe, in-scope development changes with automated validation.",
+  "allowed_paths": [
+    "src/",
+    "tests/",
+    "scripts/",
+    "config/schemas/",
+    ".agent/",
+    ".github/workflows/",
+    "Makefile",
+    "TASK_README.md"
+  ],
+  "blocked_paths": [
+    "data/",
+    "models/"
+  ],
+  "forbidden_regex": [
+    "rm\\s+-rf",
+    "DROP\\s+TABLE",
+    "git\\s+push\\s+--force"
+  ],
+  "forbidden_regex_exempt_paths": [
+    "tests/"
+  ],
+  "required_commands": [
+    "pytest tests/test_task_controller.py -q"
+  ],
+  "precommit_commands": [
+    "pytest tests/test_task_controller.py -q"
+  ],
+  "ci_commands": [
+    "pytest tests/ -q --maxfail=1"
+  ],
+  "coverage_min": 80
+}
