@@ -140,6 +140,17 @@ def train_recommenders(pipeline: DataPipeline):
     """Train recommendation engine."""
     logger.info("Training recommendation engine...")
 
+    # Validate pipeline data
+    if pipeline.transactions is None:
+        logger.error("Pipeline has no transactions. Please run data preparation first.")
+        logger.info("Run: python main.py --prepare")
+        return None
+    
+    if pipeline.bundles is None:
+        logger.error("Pipeline has no bundles. Please run data preparation first.")
+        logger.info("Run: python main.py --prepare")
+        return None
+
     # Prepare data
     transactions = pipeline.transactions["Items"].tolist()
     bundles = pipeline.bundles

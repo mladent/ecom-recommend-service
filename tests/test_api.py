@@ -4,6 +4,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch, mock_open
 
+import src.api as api_module
 from src.api import app
 
 
@@ -13,6 +14,15 @@ def client():
     app.config['TESTING'] = True
     with app.test_client() as test_client:
         yield test_client
+
+
+@pytest.fixture
+def reset_lazy_engine():
+    """Reset API lazy engine singleton between tests."""
+    previous = api_module._engine
+    api_module._engine = None
+    yield
+    api_module._engine = previous
 
 
 @pytest.fixture
@@ -82,6 +92,53 @@ class TestHealthEndpoint:
         data = json.loads(response.data)
         assert 'status' in data
         assert isinstance(data['status'], str)
+
+
+class TestEngineFactory:
+    """Tests for API lazy engine construction with injected configs."""
+
+    def test_get_engine_uses_load_config_injection(
+        self,
+        pipeline_config_llm_disabled,
+        engine_config_default,
+        api_config_default,
+        reset_lazy_engine,
+    ):
+        """get_engine should construct BundleRecommendationEngine with loaded typed configs."""
+        engine_mock = MagicMock()
+        engine_mock.load_model.return_value = True
+
+        with patch(
+            'src.api.load_config',
+            return_value=(pipeline_config_llm_disabled, engine_config_default, api_config_default, None, None),
+        ) as mock_load_config, patch('src.api.BundleRecommendationEngine', return_value=engine_mock) as mock_engine_cls:
+            result = api_module.get_engine()
+
+        assert result is engine_mock
+        assert mock_load_config.called
+        assert mock_engine_cls.called
+        kwargs = mock_engine_cls.call_args.kwargs
+        assert kwargs["pipeline_config"] is pipeline_config_llm_disabled
+        assert kwargs["engine_config"] is engine_config_default
+        engine_mock.load_model.assert_called_once_with("models/recommendation_engine.pkl")
+
+    def test_get_engine_raises_when_model_missing(
+        self,
+        pipeline_config_llm_disabled,
+        engine_config_default,
+        api_config_default,
+        reset_lazy_engine,
+    ):
+        """get_engine should raise RuntimeError when model loading fails."""
+        engine_mock = MagicMock()
+        engine_mock.load_model.return_value = False
+
+        with patch(
+            'src.api.load_config',
+            return_value=(pipeline_config_llm_disabled, engine_config_default, api_config_default, None, None),
+        ), patch('src.api.BundleRecommendationEngine', return_value=engine_mock):
+            with pytest.raises(RuntimeError, match="model not found"):
+                api_module.get_engine()
 
 
 # ============================================================================

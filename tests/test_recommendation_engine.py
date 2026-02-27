@@ -2,8 +2,6 @@
 
 import pytest
 import numpy as np
-import os
-import tempfile
 from unittest.mock import patch, MagicMock
 from src.data_pipeline import DataPipeline
 from src.recommendation_engine import (
@@ -11,6 +9,7 @@ from src.recommendation_engine import (
     SVMBundleRecommender,
     BundleRecommendationEngine,
 )
+from src.config import EngineConfig, PipelineConfig, LLMConfig, CacheConfig
 
 
 # ============================================================================
@@ -106,6 +105,23 @@ def mock_inventory_csv(tmp_path):
     return str(filepath)
 
 
+@pytest.fixture
+def custom_engine_config():
+    """Custom engine config for injection tests."""
+    return EngineConfig(svm_kernel="rbf", svm_c=2.5, random_state=123, n_jobs=1)
+
+
+@pytest.fixture
+def custom_pipeline_config():
+    """Custom pipeline config for injection tests."""
+    return PipelineConfig(
+        train_test_split=0.73,
+        llm_config=LLMConfig(),
+        cache_config=CacheConfig(),
+        oos_enabled=False,
+    )
+
+
 class TestDataPipeline:
     """Tests for data pipeline."""
 
@@ -137,6 +153,41 @@ class TestDataPipeline:
         baskets = pipeline.create_transaction_baskets()
         assert len(baskets) > 0
         assert "Items" in baskets.columns
+
+
+class TestConfigInjection:
+    """Tests for config injection behavior in recommendation components."""
+
+    def test_svm_recommender_uses_injected_engine_config(self, custom_engine_config):
+        """SVM recommender defaults should come from injected EngineConfig."""
+        recommender = SVMBundleRecommender(config=custom_engine_config)
+        assert recommender.kernel == "rbf"
+        assert recommender.C == 2.5
+        assert recommender.model.random_state == 123
+
+    def test_fit_all_uses_pipeline_split_default(
+        self,
+        sample_transactions,
+        sample_bundles,
+        custom_engine_config,
+        custom_pipeline_config,
+    ):
+        """BundleRecommendationEngine.fit_all should default to injected pipeline split."""
+        engine = BundleRecommendationEngine(
+            engine_config=custom_engine_config,
+            pipeline_config=custom_pipeline_config,
+        )
+        mock_recommender = MagicMock()
+        mock_recommender.fit.return_value = {"accuracy": 1.0}
+        engine.add_recommender("mock", mock_recommender)
+
+        engine.fit_all(sample_transactions, sample_bundles)
+
+        assert mock_recommender.fit.called
+        args = mock_recommender.fit.call_args[0]
+        assert args[0] == sample_transactions
+        assert args[1] == sample_bundles
+        assert args[2] == pytest.approx(0.73)
 
 
 class TestNaiveBayesRecommender:
@@ -649,7 +700,6 @@ class TestBundleRecommendationEngine:
         # Should return at most 5 bundles
         assert len(recs["bundles"]) <= 5
 
-    @patch('src.recommendation_engine.OOS_ENABLED', True)
     @patch('src.recommendation_engine.load_inventory_csv')
     @patch('src.recommendation_engine.select_alternatives_with_llm')
     def test_oos_substitution_enabled(
@@ -659,13 +709,19 @@ class TestBundleRecommendationEngine:
         large_transactions, 
         large_bundles,
         mock_inventory,
-        mock_llm_alternatives
+        mock_llm_alternatives,
+        pipeline_config_llm_enabled,
+        engine_config_default,
     ):
         """Test OOS substitution when enabled."""
         mock_load_inv.return_value = mock_inventory
         mock_select_llm.return_value = mock_llm_alternatives
         
-        engine = BundleRecommendationEngine()
+        pipeline_config_llm_enabled.oos_enabled = True
+        engine = BundleRecommendationEngine(
+            engine_config=engine_config_default,
+            pipeline_config=pipeline_config_llm_enabled,
+        )
         engine.add_recommender("nb", NaiveBayesBundleRecommender())
         engine.fit_all(large_transactions, large_bundles)
 
@@ -676,14 +732,19 @@ class TestBundleRecommendationEngine:
         # bundle_substitutions only appears if OOS items were substituted
         # It may not appear if no items were out of stock
 
-    @patch('src.recommendation_engine.OOS_ENABLED', False)
     def test_oos_substitution_disabled(
         self,
         large_transactions,
-        large_bundles
+        large_bundles,
+        pipeline_config_llm_disabled,
+        engine_config_default,
     ):
         """Test that OOS is not called when disabled."""
-        engine = BundleRecommendationEngine()
+        pipeline_config_llm_disabled.oos_enabled = False
+        engine = BundleRecommendationEngine(
+            engine_config=engine_config_default,
+            pipeline_config=pipeline_config_llm_disabled,
+        )
         engine.add_recommender("nb", NaiveBayesBundleRecommender())
         engine.fit_all(large_transactions, large_bundles)
 
@@ -692,7 +753,6 @@ class TestBundleRecommendationEngine:
         # Should not have bundle_substitutions when disabled
         assert "bundle_substitutions" not in recs
 
-    @patch('src.recommendation_engine.OOS_ENABLED', True)
     @patch('src.recommendation_engine.load_inventory_csv')
     @patch('src.recommendation_engine.select_alternatives_with_llm')
     @patch('src.recommendation_engine.select_alternative_heuristic')
@@ -703,7 +763,9 @@ class TestBundleRecommendationEngine:
         mock_load_inv,
         large_transactions,
         large_bundles,
-        mock_inventory
+        mock_inventory,
+        pipeline_config_llm_enabled,
+        engine_config_default,
     ):
         """Test fallback to heuristic when LLM fails."""
         from src.utils import LLMQuotaExceededError
@@ -712,7 +774,11 @@ class TestBundleRecommendationEngine:
         mock_select_llm.side_effect = LLMQuotaExceededError("Quota exceeded")
         mock_heuristic.return_value = {"item": "heuristic_item", "score": 0.6}
         
-        engine = BundleRecommendationEngine()
+        pipeline_config_llm_enabled.oos_enabled = True
+        engine = BundleRecommendationEngine(
+            engine_config=engine_config_default,
+            pipeline_config=pipeline_config_llm_enabled,
+        )
         engine.add_recommender("nb", NaiveBayesBundleRecommender())
         engine.fit_all(large_transactions, large_bundles)
 
@@ -721,18 +787,23 @@ class TestBundleRecommendationEngine:
         
         assert "bundles" in recs
 
-    @patch('src.recommendation_engine.OOS_ENABLED', True)
     @patch('src.recommendation_engine.load_inventory_csv')
     def test_oos_missing_inventory_file(
         self,
         mock_load_inv,
         large_transactions,
-        large_bundles
+        large_bundles,
+        pipeline_config_llm_enabled,
+        engine_config_default,
     ):
         """Test handling of missing inventory file."""
         mock_load_inv.return_value = {}
         
-        engine = BundleRecommendationEngine()
+        pipeline_config_llm_enabled.oos_enabled = True
+        engine = BundleRecommendationEngine(
+            engine_config=engine_config_default,
+            pipeline_config=pipeline_config_llm_enabled,
+        )
         engine.add_recommender("nb", NaiveBayesBundleRecommender())
         engine.fit_all(large_transactions, large_bundles)
 

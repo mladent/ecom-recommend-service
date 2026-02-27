@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-coverage test-html test-markers test-verbose test-quick test-failed help
+.PHONY: test test-unit test-integration test-coverage test-html test-markers test-verbose test-quick test-failed help controller-check hooks-install
 
 # Colors for output
 GREEN  := \033[0;32m
@@ -23,6 +23,8 @@ help:
 	@echo "$(GREEN)make test-llm-on$(NC)       - Run tests with LLM enabled (mocked)"
 	@echo "$(GREEN)make test-file FILE=...$(NC) - Run specific test file"
 	@echo "$(GREEN)make test-func FUNC=...$(NC) - Run specific test function"
+	@echo "$(GREEN)make controller-check$(NC)  - Run task controller on staged changes"
+	@echo "$(GREEN)make hooks-install$(NC)     - Install local pre-commit hook"
 	@echo ""
 	@echo "$(YELLOW)Examples:$(NC)"
 	@echo "  make test-file FILE=tests/test_data_pipeline.py"
@@ -102,6 +104,14 @@ test-watch:
 test-parallel:
 	@echo "$(BLUE)Running tests in parallel (requires pytest-xdist)...$(NC)"
 	pytest tests/ -v -n auto --cov=src --cov-report=term-missing
+
+controller-check:
+	@echo "$(BLUE)Running task controller checks...$(NC)"
+	python scripts/run_controller.py --staged --mode pre-commit
+
+hooks-install:
+	@echo "$(BLUE)Installing git hooks...$(NC)"
+	bash scripts/install_hooks.sh
 
 # Additional test utilities
 lint:

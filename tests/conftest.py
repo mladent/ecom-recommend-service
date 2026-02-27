@@ -5,6 +5,13 @@ import pytest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
+from src.config import (
+    LLMConfig as AppLLMConfig,
+    CacheConfig as AppCacheConfig,
+    PipelineConfig,
+    EngineConfig,
+    APIConfig,
+)
 
 # Configure pytest environment
 def pytest_configure(config):
@@ -31,6 +38,82 @@ def pytest_configure(config):
 def project_root():
     """Get project root directory."""
     return Path(__file__).parent.parent
+
+
+# ============================================================================
+# SHARED TYPED CONFIG FIXTURES
+# ============================================================================
+
+@pytest.fixture
+def typed_llm_config() -> AppLLMConfig:
+    """Typed LLM config fixture for config-injection tests."""
+    return AppLLMConfig(
+        provider="openai",
+        model="gpt-4o-mini",
+        temperature=0.0,
+        max_tokens=64,
+        timeout_seconds=10,
+        openai_api_key="test-key",
+    )
+
+
+@pytest.fixture
+def typed_cache_config(temp_dir) -> AppCacheConfig:
+    """Typed cache config with test-local cache paths."""
+    return AppCacheConfig(
+        normalization_cache_first=True,
+        normalization_cache_path=os.path.join(temp_dir, "normalization_cache.json"),
+        enrichment_cache_first=True,
+        enrichment_cache_path=os.path.join(temp_dir, "category_enrichment_cache.json"),
+        outlier_cache_first=True,
+        outlier_cache_path=os.path.join(temp_dir, "anomaly_cache.json"),
+        context_cache_first=True,
+        context_cache_path=os.path.join(temp_dir, "context_extraction_cache.json"),
+        oos_cache_first=True,
+        oos_cache_path=os.path.join(temp_dir, "out_of_stock_alternatives_cache.json"),
+    )
+
+
+@pytest.fixture
+def pipeline_config_llm_disabled(typed_llm_config, typed_cache_config, temp_dir) -> PipelineConfig:
+    """Pipeline config with all LLM-driven feature flags disabled."""
+    return PipelineConfig(
+        data_path=temp_dir,
+        llm_config=typed_llm_config,
+        cache_config=typed_cache_config,
+        normalization_enabled=False,
+        enrichment_enabled=False,
+        outlier_enabled=False,
+        context_enabled=False,
+        oos_enabled=False,
+    )
+
+
+@pytest.fixture
+def pipeline_config_llm_enabled(typed_llm_config, typed_cache_config, temp_dir) -> PipelineConfig:
+    """Pipeline config with LLM-driven feature flags enabled."""
+    return PipelineConfig(
+        data_path=temp_dir,
+        llm_config=typed_llm_config,
+        cache_config=typed_cache_config,
+        normalization_enabled=True,
+        enrichment_enabled=True,
+        outlier_enabled=True,
+        context_enabled=True,
+        oos_enabled=True,
+    )
+
+
+@pytest.fixture
+def engine_config_default() -> EngineConfig:
+    """Default engine config fixture for injected-engine tests."""
+    return EngineConfig(svm_kernel="linear", svm_c=1.0, random_state=42, n_jobs=1)
+
+
+@pytest.fixture
+def api_config_default() -> APIConfig:
+    """Default API config fixture for API config-injection tests."""
+    return APIConfig(host="127.0.0.1", port=5000, debug=False, workers=1)
 
 
 @pytest.fixture(scope="session")

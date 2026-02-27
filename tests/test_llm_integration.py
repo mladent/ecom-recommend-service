@@ -37,6 +37,7 @@ from src.utils import (
     LLMQuotaExceededError,
 )
 from src.config import (
+    LLMConfig as AppLLMConfig,
     OPENAI_API_KEY,
     AZURE_OPENAI_API_KEY,
     GEMINI_API_KEY,
@@ -141,60 +142,48 @@ def mock_urllib_llm_error():
 class TestSelectAlternativesWithLLM:
     """Test select_alternatives_with_llm() with mocked API calls."""
 
-    def test_empty_missing_item(self):
+    def test_empty_missing_item(self, typed_llm_config):
         """Empty missing_item returns empty list."""
         result = select_alternatives_with_llm(
             missing_item="",
             candidates=["a", "b"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
             max_alternatives=1,
+            llm_config=typed_llm_config,
         )
         assert result == []
 
-    def test_empty_candidates(self):
+    def test_empty_candidates(self, typed_llm_config):
         """Empty candidates returns empty list."""
         result = select_alternatives_with_llm(
             missing_item="monitor",
             candidates=[],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
             max_alternatives=1,
+            llm_config=typed_llm_config,
         )
         assert result == []
 
-    def test_none_inputs(self):
+    def test_none_inputs(self, typed_llm_config):
         """None inputs return empty list."""
         result = select_alternatives_with_llm(
             missing_item=None,
             candidates=None,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
             max_alternatives=1,
+            llm_config=typed_llm_config,
         )
         assert result == []
 
-    def test_success_with_mocked_openai(self, sample_candidates, mock_urllib_llm_success):
+    def test_success_with_mocked_openai(
+        self,
+        sample_candidates,
+        mock_urllib_llm_success,
+        typed_llm_config,
+    ):
         """Successful call with mocked OpenAI."""
         result = select_alternatives_with_llm(
             missing_item="monitor",
             candidates=sample_candidates,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
             max_alternatives=1,
-            api_key="sk-mock",
+            llm_config=typed_llm_config,
         )
         assert isinstance(result, list)
 
@@ -208,20 +197,29 @@ class TestSelectAlternativesWithLLM:
             mock_response.status = 200
             mock_urlopen.return_value = mock_response
 
-            result = select_alternatives_with_llm(
-                missing_item="monitor",
-                candidates=sample_candidates,
+            provider_kwargs = {
+                "openai": {"openai_api_key": "mock-key"},
+                "azure": {"azure_api_key": "mock-key", "azure_endpoint": "https://example.azure.com", "azure_deployment": "test-deployment"},
+                "gemini": {"gemini_api_key": "mock-key"},
+            }
+            llm_config = AppLLMConfig(
                 provider=provider,
                 model="gpt-4o-mini",
                 temperature=0.7,
                 max_tokens=512,
                 timeout_seconds=30,
+                **provider_kwargs[provider],
+            )
+
+            result = select_alternatives_with_llm(
+                missing_item="monitor",
+                candidates=sample_candidates,
                 max_alternatives=1,
-                api_key="mock-key",
+                llm_config=llm_config,
             )
             assert isinstance(result, list)
 
-    def test_invalid_json_graceful_failure(self, sample_candidates):
+    def test_invalid_json_graceful_failure(self, sample_candidates, typed_llm_config):
         """Invalid JSON response returns empty list (no crash)."""
         with patch("urllib.request.urlopen") as mock_urlopen:
             mock_response = MagicMock()
@@ -231,17 +229,12 @@ class TestSelectAlternativesWithLLM:
             result = select_alternatives_with_llm(
                 missing_item="monitor",
                 candidates=sample_candidates,
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=512,
-                timeout_seconds=30,
                 max_alternatives=1,
-                api_key="sk-mock",
+                llm_config=typed_llm_config,
             )
             assert result == []
 
-    def test_llm_service_error_graceful_failure(self, sample_candidates):
+    def test_llm_service_error_graceful_failure(self, sample_candidates, typed_llm_config):
         """LLM service error returns empty list."""
         with patch("urllib.request.urlopen") as mock_urlopen:
             mock_urlopen.side_effect = Exception("Service error")
@@ -249,13 +242,8 @@ class TestSelectAlternativesWithLLM:
             result = select_alternatives_with_llm(
                 missing_item="monitor",
                 candidates=sample_candidates,
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=512,
-                timeout_seconds=30,
                 max_alternatives=1,
-                api_key="sk-mock",
+                llm_config=typed_llm_config,
             )
             assert result == []
 
@@ -294,7 +282,7 @@ class TestFallbackMechanisms:
         )
         assert result is None
 
-    def test_fallback_on_llm_error(self, sample_candidates):
+    def test_fallback_on_llm_error(self, sample_candidates, typed_llm_config):
         """Gracefully returns empty list on LLM error."""
         with patch("urllib.request.urlopen") as mock_urlopen:
             mock_urlopen.side_effect = LLMQuotaExceededError("Rate limit")
@@ -302,13 +290,8 @@ class TestFallbackMechanisms:
             result = select_alternatives_with_llm(
                 missing_item="monitor",
                 candidates=sample_candidates,
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=512,
-                timeout_seconds=30,
                 max_alternatives=1,
-                api_key="sk-mock",
+                llm_config=typed_llm_config,
             )
             assert isinstance(result, list)
 

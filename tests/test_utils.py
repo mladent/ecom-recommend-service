@@ -39,6 +39,7 @@ from src.utils import (
     normalize_description_with_llm,
     select_alternatives_with_llm,
 )
+from src.config import LLMConfig as AppLLMConfig
 
 
 # ============================================================================
@@ -239,36 +240,75 @@ class TestExtractContextsWithLLM:
     - Markdown code block parsing in JSON
     """
 
-    def test_empty_input_returns_empty_contexts(self):
+    def test_empty_input_returns_empty_contexts(self, typed_llm_config):
         """Empty product description returns empty contexts list."""
         result = extract_contexts_with_llm(
             text="",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         assert result == {"contexts": []}
 
-    def test_none_input_returns_empty_contexts(self):
+    def test_none_input_returns_empty_contexts(self, typed_llm_config):
         """None input returns empty contexts list."""
         result = extract_contexts_with_llm(
             text=None,
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         assert result == {"contexts": []}
 
+    @patch("src.utils.LLMClient.chat_completion_json")
+    def test_extract_contexts_with_injected_llm_config(self, mock_chat_json):
+        """Utils helper should accept injected typed LLM config without explicit provider/model args."""
+        mock_chat_json.return_value = {"contexts": []}
+        llm_config = AppLLMConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            temperature=0.2,
+            max_tokens=64,
+            timeout_seconds=15,
+            openai_api_key="test-key",
+        )
+
+        result = extract_contexts_with_llm(
+            text="sample product",
+            max_contexts=3,
+            llm_config=llm_config,
+        )
+
+        assert result == {"contexts": []}
+        assert mock_chat_json.called
+
+
+@pytest.mark.unit
+@pytest.mark.llm
+class TestConfigInjectionPaths:
+    """Tests for llm_config parameter injection across utils helpers."""
+
+    @patch("src.utils.LLMClient.chat_completion")
+    def test_normalize_description_with_injected_llm_config(self, mock_chat_completion):
+        """Normalization helper should use injected llm_config when explicit args are omitted."""
+        mock_chat_completion.return_value = "normalized output"
+        llm_config = AppLLMConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            temperature=0.0,
+            max_tokens=32,
+            timeout_seconds=10,
+            openai_api_key="test-key",
+        )
+
+        result = normalize_description_with_llm(
+            text="RAW DESCRIPTION",
+            llm_config=llm_config,
+        )
+
+        assert result == "normalized output"
+        assert mock_chat_completion.called
+
     @patch("urllib.request.urlopen")
-    def test_valid_response_structure(self, mock_urlopen, mock_llm_response_contexts):
+    def test_valid_response_structure(self, mock_urlopen, mock_llm_response_contexts, typed_llm_config):
         """Valid LLM response parsed with correct structure."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_contexts).encode("utf-8")
@@ -279,19 +319,14 @@ class TestExtractContextsWithLLM:
         result = extract_contexts_with_llm(
             text="Blue T-Shirt for casual wear",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert "contexts" in result
         assert isinstance(result["contexts"], list)
 
     @patch("urllib.request.urlopen")
-    def test_invalid_json_response_returns_empty(self, mock_urlopen):
+    def test_invalid_json_response_returns_empty(self, mock_urlopen, typed_llm_config):
         """Invalid JSON response gracefully returns empty contexts."""
         mock_response = MagicMock()
         mock_response.read.return_value = b"invalid json {{{broken"
@@ -300,18 +335,13 @@ class TestExtractContextsWithLLM:
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert result == {"contexts": []}
 
     @patch("urllib.request.urlopen")
-    def test_missing_contexts_field_returns_empty(self, mock_urlopen):
+    def test_missing_contexts_field_returns_empty(self, mock_urlopen, typed_llm_config):
         """Response without 'contexts' field returns empty contexts."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps({"data": []}).encode("utf-8")
@@ -320,18 +350,13 @@ class TestExtractContextsWithLLM:
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert result == {"contexts": []}
 
     @patch("urllib.request.urlopen")
-    def test_markdown_code_block_parsing(self, mock_urlopen, mock_llm_response_contexts):
+    def test_markdown_code_block_parsing(self, mock_urlopen, mock_llm_response_contexts, typed_llm_config):
         """JSON wrapped in markdown code blocks is extracted correctly."""
         markdown_response = f"```json\n{json.dumps(mock_llm_response_contexts)}\n```"
         mock_response = MagicMock()
@@ -341,59 +366,61 @@ class TestExtractContextsWithLLM:
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         # Should parse despite markdown wrapping
         assert "contexts" in result
 
     @patch("urllib.request.urlopen")
-    def test_service_error_returns_empty(self, mock_urlopen):
+    def test_service_error_returns_empty(self, mock_urlopen, typed_llm_config):
         """Service error (HTTP error) returns empty contexts gracefully."""
         mock_urlopen.side_effect = Exception("Connection refused")
 
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert result == {"contexts": []}
 
     @patch("urllib.request.urlopen")
     @pytest.mark.parametrize("provider", ["openai", "azure", "gemini", "anthropic", "perplexity"])
-    def test_all_providers(self, mock_urlopen, provider, mock_llm_response_contexts):
+    def test_all_providers(self, mock_urlopen, provider, mock_llm_response_contexts, typed_llm_config):
         """All 5 LLM providers supported with identical behavior."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_contexts).encode("utf-8")
         mock_urlopen.return_value = mock_response
 
+        llm_config = AppLLMConfig(
+            provider=provider,
+            model="appropriate-for-provider",
+            temperature=typed_llm_config.temperature,
+            max_tokens=typed_llm_config.max_tokens,
+            timeout_seconds=typed_llm_config.timeout_seconds,
+            openai_api_key=typed_llm_config.openai_api_key,
+            azure_api_key=typed_llm_config.azure_api_key,
+            azure_endpoint=typed_llm_config.azure_endpoint,
+            azure_deployment=typed_llm_config.azure_deployment,
+            azure_api_version=typed_llm_config.azure_api_version,
+            gemini_api_key=typed_llm_config.gemini_api_key,
+            anthropic_api_key=typed_llm_config.anthropic_api_key,
+            perplexity_api_key=typed_llm_config.perplexity_api_key,
+            perplexity_base_url=typed_llm_config.perplexity_base_url,
+        )
+
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=5,
-            provider=provider,
-            model="appropriate-for-provider",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=llm_config,
         )
 
         assert "contexts" in result
         assert len(result["contexts"]) >= 0
 
     @patch("urllib.request.urlopen")
-    def test_max_contexts_limit_respected(self, mock_urlopen):
+    def test_max_contexts_limit_respected(self, mock_urlopen, typed_llm_config):
         """Response with more contexts than max_contexts returns only max_contexts."""
         response = {
             "contexts": [
@@ -408,12 +435,7 @@ class TestExtractContextsWithLLM:
         result = extract_contexts_with_llm(
             text="Test product",
             max_contexts=3,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         # Should respect max_contexts limit or return all
@@ -436,38 +458,28 @@ class TestEnrichCategoriesWithLLM:
     - Unicode field names and values
     """
 
-    def test_empty_input_all_nan(self):
+    def test_empty_input_all_nan(self, typed_llm_config):
         """Empty description returns all fields as NaN."""
         result = enrich_categories_with_llm(
             text="",
             fields=["category", "subcategory", "material", "color"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert all(v == "NaN" for v in result.values())
 
-    def test_none_input_all_nan(self):
+    def test_none_input_all_nan(self, typed_llm_config):
         """None description returns all fields as NaN."""
         result = enrich_categories_with_llm(
             text=None,
             fields=["category", "subcategory", "material"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert all(v == "NaN" for v in result.values())
 
     @patch("urllib.request.urlopen")
-    def test_valid_response_all_fields(self, mock_urlopen, mock_llm_response_categories):
+    def test_valid_response_all_fields(self, mock_urlopen, mock_llm_response_categories, typed_llm_config):
         """Valid response with all fields returns dict with expected structure."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_categories).encode("utf-8")
@@ -476,12 +488,7 @@ class TestEnrichCategoriesWithLLM:
         result = enrich_categories_with_llm(
             text="Blue cotton shirt",
             fields=["category", "subcategory", "material", "size", "color", "price_range"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         # Check structure: should return dict with requested fields
@@ -489,7 +496,7 @@ class TestEnrichCategoriesWithLLM:
         assert len(result) == 6  # 6 fields requested
 
     @patch("urllib.request.urlopen")
-    def test_missing_fields_default_to_nan(self, mock_urlopen, mock_llm_response_categories_with_nan):
+    def test_missing_fields_default_to_nan(self, mock_urlopen, mock_llm_response_categories_with_nan, typed_llm_config):
         """Missing/NaN fields in response remain as NaN."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_categories_with_nan).encode("utf-8")
@@ -498,12 +505,7 @@ class TestEnrichCategoriesWithLLM:
         result = enrich_categories_with_llm(
             text="Blue cotton shirt",
             fields=["category", "subcategory", "material", "size", "color", "price_range"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert result["subcategory"] == "NaN"
@@ -511,7 +513,7 @@ class TestEnrichCategoriesWithLLM:
         assert result["price_range"] == "NaN"
 
     @patch("urllib.request.urlopen")
-    def test_invalid_json_all_nan(self, mock_urlopen):
+    def test_invalid_json_all_nan(self, mock_urlopen, typed_llm_config):
         """Invalid JSON response returns all NaN."""
         mock_response = MagicMock()
         mock_response.read.return_value = b"not valid json {{{{"
@@ -520,58 +522,60 @@ class TestEnrichCategoriesWithLLM:
         result = enrich_categories_with_llm(
             text="Test product",
             fields=["category", "material", "color"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert all(v == "NaN" for v in result.values())
 
     @patch("urllib.request.urlopen")
-    def test_service_error_all_nan(self, mock_urlopen):
+    def test_service_error_all_nan(self, mock_urlopen, typed_llm_config):
         """Service error returns all NaN gracefully."""
         mock_urlopen.side_effect = Exception("Service unavailable")
 
         result = enrich_categories_with_llm(
             text="Test product",
             fields=["category", "material"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         assert all(v == "NaN" for v in result.values())
 
     @patch("urllib.request.urlopen")
     @pytest.mark.parametrize("provider", ["openai", "azure", "gemini", "anthropic", "perplexity"])
-    def test_all_providers_supported(self, mock_urlopen, provider, mock_llm_response_categories):
+    def test_all_providers_supported(self, mock_urlopen, provider, mock_llm_response_categories, typed_llm_config):
         """All 5 LLM providers work identically."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_categories).encode("utf-8")
         mock_urlopen.return_value = mock_response
 
+        llm_config = AppLLMConfig(
+            provider=provider,
+            model="appropriate-for-provider",
+            temperature=typed_llm_config.temperature,
+            max_tokens=typed_llm_config.max_tokens,
+            timeout_seconds=typed_llm_config.timeout_seconds,
+            openai_api_key=typed_llm_config.openai_api_key,
+            azure_api_key=typed_llm_config.azure_api_key,
+            azure_endpoint=typed_llm_config.azure_endpoint,
+            azure_deployment=typed_llm_config.azure_deployment,
+            azure_api_version=typed_llm_config.azure_api_version,
+            gemini_api_key=typed_llm_config.gemini_api_key,
+            anthropic_api_key=typed_llm_config.anthropic_api_key,
+            perplexity_api_key=typed_llm_config.perplexity_api_key,
+            perplexity_base_url=typed_llm_config.perplexity_base_url,
+        )
+
         result = enrich_categories_with_llm(
             text="Test product",
             fields=["category", "material", "color"],
-            provider=provider,
-            model="appropriate-for-provider",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=llm_config,
         )
 
         assert len(result) == 3
         assert any(v != "NaN" for v in result.values()) or all(v == "NaN" for v in result.values())
 
     @patch("urllib.request.urlopen")
-    def test_field_order_preserved(self, mock_urlopen, mock_llm_response_categories):
+    def test_field_order_preserved(self, mock_urlopen, mock_llm_response_categories, typed_llm_config):
         """Response fields appear in requested field order."""
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(mock_llm_response_categories).encode("utf-8")
@@ -581,12 +585,7 @@ class TestEnrichCategoriesWithLLM:
         result = enrich_categories_with_llm(
             text="Test product",
             fields=fields,
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
 
         # Result should have same fields
@@ -608,23 +607,18 @@ class TestEnrichCategoriesBatchWithLLM:
     - Field mapping correctness
     """
 
-    def test_empty_list_returns_empty(self):
+    def test_empty_list_returns_empty(self, typed_llm_config):
         """Empty product list returns empty results dict."""
         result = enrich_categories_batch_with_llm(
             texts=[],
             fields=["category", "material"],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=256,
-            timeout_seconds=30,
             batch_size=10,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == {}
 
-    def test_single_item(self):
+    def test_single_item(self, typed_llm_config):
         """Single item processed correctly."""
         texts = ["Blue Cotton T-Shirt"]
         
@@ -634,18 +628,13 @@ class TestEnrichCategoriesBatchWithLLM:
             result = enrich_categories_batch_with_llm(
                 texts=texts,
                 fields=["category", "material"],
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=256,
-                timeout_seconds=30,
                 batch_size=10,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             assert len(result) >= 0  # May be 0 or 1 depending on implementation
 
-    def test_multiple_items(self):
+    def test_multiple_items(self, typed_llm_config):
         """Multiple items processed in batch."""
         texts = [
             "Blue Cotton T-Shirt",
@@ -659,19 +648,14 @@ class TestEnrichCategoriesBatchWithLLM:
             result = enrich_categories_batch_with_llm(
                 texts=texts,
                 fields=["category", "material"],
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=256,
-                timeout_seconds=30,
                 batch_size=2,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             # Should process without errors
             assert isinstance(result, dict)
 
-    def test_duplicate_texts_deduplicated(self):
+    def test_duplicate_texts_deduplicated(self, typed_llm_config):
         """Duplicate texts are deduplicated before processing."""
         texts = [
             "Blue Cotton T-Shirt",
@@ -685,19 +669,14 @@ class TestEnrichCategoriesBatchWithLLM:
             result = enrich_categories_batch_with_llm(
                 texts=texts,
                 fields=["category", "material"],
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=256,
-                timeout_seconds=30,
                 batch_size=10,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             # Should call LLM fewer times due to deduplication
             assert isinstance(result, dict)
 
-    def test_batch_size_respected(self):
+    def test_batch_size_respected(self, typed_llm_config):
         """Batch size limits are respected in processing."""
         texts = [f"Product {i}" for i in range(25)]
         
@@ -707,13 +686,8 @@ class TestEnrichCategoriesBatchWithLLM:
             result = enrich_categories_batch_with_llm(
                 texts=texts,
                 fields=["category", "material"],
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=256,
-                timeout_seconds=30,
                 batch_size=5,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             # Should process without errors
@@ -735,21 +709,16 @@ class TestBatchScoreAnomaliesWithLLM:
     - Missing/extra keys in response
     """
 
-    def test_empty_list_returns_empty(self):
+    def test_empty_list_returns_empty(self, typed_llm_config):
         """Empty transaction list returns empty results."""
         result = batch_score_anomalies_with_llm(
             records=[],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == {}
 
-    def test_single_record(self):
+    def test_single_record(self, typed_llm_config):
         """Single record scored correctly."""
         records = [
             {"transaction_id": "1", "amount": 100, "quantity": 5}
@@ -769,17 +738,12 @@ class TestBatchScoreAnomaliesWithLLM:
             
             result = batch_score_anomalies_with_llm(
                 records=records,
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=512,
-                timeout_seconds=30,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             assert isinstance(result, dict)
 
-    def test_multiple_records(self):
+    def test_multiple_records(self, typed_llm_config):
         """Multiple records scored in batch."""
         records = [
             {"transaction_id": "1", "amount": 100, "quantity": 5},
@@ -799,18 +763,13 @@ class TestBatchScoreAnomaliesWithLLM:
             
             result = batch_score_anomalies_with_llm(
                 records=records,
-                provider="openai",
-                model="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=512,
-                timeout_seconds=30,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
             
             assert isinstance(result, dict)
 
     @patch("urllib.request.urlopen")
-    def test_invalid_json_returns_empty(self, mock_urlopen):
+    def test_invalid_json_returns_empty(self, mock_urlopen, typed_llm_config):
         """Invalid JSON response returns empty dict gracefully."""
         mock_response = MagicMock()
         mock_response.read.return_value = b"invalid {{{"
@@ -818,36 +777,26 @@ class TestBatchScoreAnomaliesWithLLM:
         
         result = batch_score_anomalies_with_llm(
             records=[{"transaction_id": "1", "amount": 100}],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == {}
 
     @patch("urllib.request.urlopen")
-    def test_service_error_returns_empty(self, mock_urlopen):
+    def test_service_error_returns_empty(self, mock_urlopen, typed_llm_config):
         """Service error returns empty dict gracefully."""
         mock_urlopen.side_effect = Exception("Service error")
         
         result = batch_score_anomalies_with_llm(
             records=[{"transaction_id": "1", "amount": 100}],
-            provider="openai",
-            model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == {}
 
     @patch("urllib.request.urlopen")
     @pytest.mark.parametrize("provider", ["openai", "azure", "gemini", "anthropic", "perplexity"])
-    def test_all_providers_supported(self, mock_urlopen, provider):
+    def test_all_providers_supported(self, mock_urlopen, provider, typed_llm_config):
         """All 5 LLM providers supported."""
         response = {
             "record_1": {"is_anomalous": False, "anomaly_type": "normal"}
@@ -856,14 +805,26 @@ class TestBatchScoreAnomaliesWithLLM:
         mock_response.read.return_value = json.dumps(response).encode("utf-8")
         mock_urlopen.return_value = mock_response
         
-        result = batch_score_anomalies_with_llm(
-            records=[{"transaction_id": "1", "amount": 100}],
+        llm_config = AppLLMConfig(
             provider=provider,
             model="appropriate-for-provider",
-            temperature=0.7,
-            max_tokens=512,
-            timeout_seconds=30,
-            api_key="test-key"
+            temperature=typed_llm_config.temperature,
+            max_tokens=typed_llm_config.max_tokens,
+            timeout_seconds=typed_llm_config.timeout_seconds,
+            openai_api_key=typed_llm_config.openai_api_key,
+            azure_api_key=typed_llm_config.azure_api_key,
+            azure_endpoint=typed_llm_config.azure_endpoint,
+            azure_deployment=typed_llm_config.azure_deployment,
+            azure_api_version=typed_llm_config.azure_api_version,
+            gemini_api_key=typed_llm_config.gemini_api_key,
+            anthropic_api_key=typed_llm_config.anthropic_api_key,
+            perplexity_api_key=typed_llm_config.perplexity_api_key,
+            perplexity_base_url=typed_llm_config.perplexity_base_url,
+        )
+
+        result = batch_score_anomalies_with_llm(
+            records=[{"transaction_id": "1", "amount": 100}],
+            llm_config=llm_config,
         )
         
         assert isinstance(result, dict)
@@ -1612,7 +1573,7 @@ class TestHttpPostJson:
             "https://api.example.com",
             401,
             "Unauthorized",
-            {},
+            None,  # type: ignore[arg-type]
             None
         )
         
@@ -1703,140 +1664,119 @@ class TestLLMQuotaExceededError:
 class TestNormalizeDescriptionWithLLM:
     """Tests for LLM-based description normalization."""
     
-    def test_normalize_empty_text(self):
+    def test_normalize_empty_text(self, typed_llm_config):
         """Test normalization of empty text returns empty string."""
         from src.utils import normalize_description_with_llm
         result = normalize_description_with_llm(
             "",
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=100,
-            timeout_seconds=30,
-            api_key="fake-key"
+            llm_config=typed_llm_config,
         )
         assert result == ""
     
-    def test_normalize_none_text(self):
+    def test_normalize_none_text(self, typed_llm_config):
         """Test normalization of None text."""
         from src.utils import normalize_description_with_llm
         result = normalize_description_with_llm(
             None,
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=100,
-            timeout_seconds=30,
-            api_key="fake-key"
+            llm_config=typed_llm_config,
         )
         assert result == ""
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_openai_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_openai_success(self, mock_chat, typed_llm_config):
         """Test successful OpenAI normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": "normalized description"}}
-            ]
-        }
+        mock_chat.return_value = "normalized description"
         
         result = normalize_description_with_llm(
             "messy description",
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=100,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == "normalized description"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_azure_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_azure_success(self, mock_chat):
         """Test successful Azure normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": "normalized"}}
-            ]
-        }
-        
-        result = normalize_description_with_llm(
-            "test",
+        mock_chat.return_value = "normalized"
+        llm_config = AppLLMConfig(
             provider="azure",
             model="gpt-4",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key",
-            endpoint="https://test.openai.azure.com",
-            deployment="test-deployment"
+            azure_api_key="test-key",
+            azure_endpoint="https://test.openai.azure.com",
+            azure_deployment="test-deployment",
+        )
+        
+        result = normalize_description_with_llm(
+            "test",
+            llm_config=llm_config,
         )
         
         assert result == "normalized"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_gemini_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_gemini_success(self, mock_chat):
         """Test successful Gemini normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "candidates": [
-                {"content": {"parts": [{"text": "normalized"}]}}
-            ]
-        }
-        
-        result = normalize_description_with_llm(
-            "test",
+        mock_chat.return_value = "normalized"
+        llm_config = AppLLMConfig(
             provider="gemini",
             model="gemini-pro",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key"
+            gemini_api_key="test-key",
+        )
+        
+        result = normalize_description_with_llm(
+            "test",
+            llm_config=llm_config,
         )
         
         assert result == "normalized"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_anthropic_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_anthropic_success(self, mock_chat):
         """Test successful Anthropic normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "content": [{"text": "normalized"}]
-        }
-        
-        result = normalize_description_with_llm(
-            "test",
+        mock_chat.return_value = "normalized"
+        llm_config = AppLLMConfig(
             provider="anthropic",
             model="claude-3",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key"
+            anthropic_api_key="test-key",
+        )
+        
+        result = normalize_description_with_llm(
+            "test",
+            llm_config=llm_config,
         )
         
         assert result == "normalized"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_perplexity_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_perplexity_success(self, mock_chat):
         """Test successful Perplexity normalization."""
         from src.utils import normalize_description_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": "normalized"}}
-            ]
-        }
-        
-        result = normalize_description_with_llm(
-            "test",
+        mock_chat.return_value = "normalized"
+        llm_config = AppLLMConfig(
             provider="perplexity",
             model="pplx-7b",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key"
+            perplexity_api_key="test-key",
+        )
+        
+        result = normalize_description_with_llm(
+            "test",
+            llm_config=llm_config,
         )
         
         assert result == "normalized"
@@ -1844,13 +1784,17 @@ class TestNormalizeDescriptionWithLLM:
     def test_normalize_missing_openai_key(self):
         """Test OpenAI normalization with missing API key."""
         from src.utils import normalize_description_with_llm
-        result = normalize_description_with_llm(
-            "test description",
+        llm_config = AppLLMConfig(
             provider="openai",
             model="gpt-4",
             temperature=0.7,
             max_tokens=100,
-            timeout_seconds=30
+            timeout_seconds=30,
+            openai_api_key=None,
+        )
+        result = normalize_description_with_llm(
+            "test description",
+            llm_config=llm_config,
         )
         # Should fallback to original text on error
         assert result == "test description"
@@ -1858,49 +1802,43 @@ class TestNormalizeDescriptionWithLLM:
     def test_normalize_missing_azure_credentials(self):
         """Test Azure normalization with missing credentials."""
         from src.utils import normalize_description_with_llm
-        result = normalize_description_with_llm(
-            "test description",
+        llm_config = AppLLMConfig(
             provider="azure",
             model="gpt-4",
             temperature=0.7,
             max_tokens=100,
             timeout_seconds=30,
-            api_key="test-key"
-            # Missing endpoint and deployment
+            azure_api_key="test-key",
+            azure_endpoint=None,
+            azure_deployment=None,
+        )
+        result = normalize_description_with_llm(
+            "test description",
+            llm_config=llm_config,
         )
         assert result == "test description"
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_quota_exceeded(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_quota_exceeded(self, mock_chat, typed_llm_config):
         """Test handling of quota exceeded error."""
         from src.utils import normalize_description_with_llm
-        mock_post.side_effect = RuntimeError("insufficient_quota")
+        mock_chat.side_effect = RuntimeError("insufficient_quota")
         
         with pytest.raises(LLMQuotaExceededError):
             normalize_description_with_llm(
                 "test",
-                provider="openai",
-                model="gpt-4",
-                temperature=0.7,
-                max_tokens=100,
-                timeout_seconds=30,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
     
-    @patch('src.utils._http_post_json')
-    def test_normalize_generic_error_fallback(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion')
+    def test_normalize_generic_error_fallback(self, mock_chat, typed_llm_config):
         """Test fallback to original text on generic error."""
         from src.utils import normalize_description_with_llm
-        mock_post.side_effect = RuntimeError("API error")
+        mock_chat.side_effect = RuntimeError("API error")
         
         result = normalize_description_with_llm(
             "original text",
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=100,
-            timeout_seconds=30,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == "original text"
@@ -1938,366 +1876,264 @@ class TestNormalizeDescriptionWithLLM:
 class TestSelectAlternativesWithLLM:
     """Tests for LLM-based alternative selection."""
     
-    def test_select_alternatives_empty_item(self):
+    def test_select_alternatives_empty_item(self, typed_llm_config):
         """Test alternative selection with empty missing item."""
         from src.utils import select_alternatives_with_llm
         result = select_alternatives_with_llm(
             "",
             ["item1", "item2"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         assert result == []
     
-    def test_select_alternatives_empty_candidates(self):
+    def test_select_alternatives_empty_candidates(self, typed_llm_config):
         """Test alternative selection with empty candidates."""
         from src.utils import select_alternatives_with_llm
         result = select_alternatives_with_llm(
             "missing_item",
             [],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         assert result == []
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_openai_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_openai_success(self, mock_chat, typed_llm_config):
         """Test successful OpenAI alternative selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.95, "reason": "similar"}]}'}}
-            ]
-        }
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.95, "reason": "similar"}]}
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1", "alt2"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert len(result) == 1
         assert result[0]["item"] == "alt1"
         assert result[0]["score"] == 0.95
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_with_markdown_fence(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_with_markdown_fence(self, mock_chat, typed_llm_config):
         """Test parsing response with markdown code fence."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": '''Here are alternatives:
-```json
-[{"item": "alt1", "score": 0.9, "reason": "best match"}]
-```'''
-                    }
-                }
-            ]
-        }
+        mock_chat.return_value = [{"item": "alt1", "score": 0.9, "reason": "best match"}]
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert len(result) == 1
         assert result[0]["item"] == "alt1"
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_max_alternatives_limit(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_max_alternatives_limit(self, mock_chat, typed_llm_config):
         """Test that results are limited by max_alternatives."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps({
-                            "alternatives": [
-                                {"item": "alt1", "score": 0.9, "reason": "1"},
-                                {"item": "alt2", "score": 0.8, "reason": "2"},
-                                {"item": "alt3", "score": 0.7, "reason": "3"},
-                                {"item": "alt4", "score": 0.6, "reason": "4"},
-                            ]
-                        })
-                    }
-                }
+        mock_chat.return_value = {
+            "alternatives": [
+                {"item": "alt1", "score": 0.9, "reason": "1"},
+                {"item": "alt2", "score": 0.8, "reason": "2"},
+                {"item": "alt3", "score": 0.7, "reason": "3"},
+                {"item": "alt4", "score": 0.6, "reason": "4"},
             ]
         }
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1", "alt2", "alt3", "alt4"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=2,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert len(result) == 2
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_raw_list_response(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_raw_list_response(self, mock_chat, typed_llm_config):
         """Test parsing when response is raw list (not wrapped dict)."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps([
-                            {"item": "alt1", "score": 0.9, "reason": "match"}
-                        ])
-                    }
-                }
-            ]
-        }
+        mock_chat.return_value = [
+            {"item": "alt1", "score": 0.9, "reason": "match"}
+        ]
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert len(result) == 1
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_azure_success(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_azure_success(self, mock_chat):
         """Test successful Azure alternative selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}}
-            ]
-        }
-        
-        result = select_alternatives_with_llm(
-            "missing",
-            ["alt1"],
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
+        llm_config = AppLLMConfig(
             provider="azure",
             model="gpt-4",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
-            max_alternatives=3,
-            api_key="test-key",
-            endpoint="https://test.openai.azure.com",
-            deployment="test"
+            azure_api_key="test-key",
+            azure_endpoint="https://test.openai.azure.com",
+            azure_deployment="test",
         )
-        
-        assert len(result) == 1
-    
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_gemini_success(self, mock_post):
-        """Test successful Gemini alternative selection."""
-        from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "candidates": [
-                {"content": {"parts": [{"text": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}]}}
-            ]
-        }
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
+            max_alternatives=3,
+            llm_config=llm_config,
+        )
+        
+        assert len(result) == 1
+    
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_gemini_success(self, mock_chat):
+        """Test successful Gemini alternative selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
+        llm_config = AppLLMConfig(
             provider="gemini",
             model="gemini-pro",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
-            max_alternatives=3,
-            api_key="test-key"
+            gemini_api_key="test-key",
         )
-        
-        assert len(result) == 1
-    
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_anthropic_success(self, mock_post):
-        """Test successful Anthropic alternative selection."""
-        from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "content": [
-                {"text": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}
-            ]
-        }
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
+            max_alternatives=3,
+            llm_config=llm_config,
+        )
+        
+        assert len(result) == 1
+    
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_anthropic_success(self, mock_chat):
+        """Test successful Anthropic alternative selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
+        llm_config = AppLLMConfig(
             provider="anthropic",
             model="claude-3",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
-            max_alternatives=3,
-            api_key="test-key"
+            anthropic_api_key="test-key",
         )
-        
-        assert len(result) == 1
-    
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_perplexity_success(self, mock_post):
-        """Test successful Perplexity alternative selection."""
-        from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}'}}
-            ]
-        }
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
+            max_alternatives=3,
+            llm_config=llm_config,
+        )
+        
+        assert len(result) == 1
+    
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_perplexity_success(self, mock_chat):
+        """Test successful Perplexity alternative selection."""
+        from src.utils import select_alternatives_with_llm
+        mock_chat.return_value = {"alternatives": [{"item": "alt1", "score": 0.9, "reason": "match"}]}
+        llm_config = AppLLMConfig(
             provider="perplexity",
             model="pplx-7b",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
+            perplexity_api_key="test-key",
+        )
+        
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=llm_config,
         )
         
         assert len(result) == 1
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_invalid_json(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_invalid_json(self, mock_chat, typed_llm_config):
         """Test fallback on invalid JSON response."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": "invalid json content"}}
-            ]
-        }
+        mock_chat.return_value = "invalid json content"
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == []
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_invalid_schema(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_invalid_schema(self, mock_chat, typed_llm_config):
         """Test fallback on schema validation failure."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"invalid": "structure"}'}}
-            ]
-        }
+        mock_chat.return_value = '{"invalid": "structure"}'
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == []
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_non_list_alternatives(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_non_list_alternatives(self, mock_chat, typed_llm_config):
         """Test fallback when alternatives field is not a list."""
         from src.utils import select_alternatives_with_llm
-        mock_post.return_value = {
-            "choices": [
-                {"message": {"content": '{"alternatives": "not a list"}'}}
-            ]
-        }
+        mock_chat.return_value = {"alternatives": "not a list"}
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == []
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_quota_exceeded(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_quota_exceeded(self, mock_chat, typed_llm_config):
         """Test handling of quota exceeded during selection."""
         from src.utils import select_alternatives_with_llm
-        mock_post.side_effect = RuntimeError("quota exceeded")
+        mock_chat.side_effect = RuntimeError("quota exceeded")
         
         with pytest.raises(LLMQuotaExceededError):
             select_alternatives_with_llm(
                 "missing",
                 ["alt1"],
-                provider="openai",
-                model="gpt-4",
-                temperature=0.7,
-                max_tokens=500,
-                timeout_seconds=30,
                 max_alternatives=3,
-                api_key="test-key"
+                llm_config=typed_llm_config,
             )
     
-    @patch('src.utils._http_post_json')
-    def test_select_alternatives_generic_error_fallback(self, mock_post):
+    @patch('src.llm_client.LLMClient.chat_completion_json')
+    def test_select_alternatives_generic_error_fallback(self, mock_chat, typed_llm_config):
         """Test fallback to empty list on generic error."""
         from src.utils import select_alternatives_with_llm
-        mock_post.side_effect = RuntimeError("API error")
+        mock_chat.side_effect = RuntimeError("API error")
         
         result = select_alternatives_with_llm(
             "missing",
             ["alt1"],
-            provider="openai",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=500,
-            timeout_seconds=30,
             max_alternatives=3,
-            api_key="test-key"
+            llm_config=typed_llm_config,
         )
         
         assert result == []
@@ -2305,15 +2141,19 @@ class TestSelectAlternativesWithLLM:
     def test_select_alternatives_missing_openai_key(self):
         """Test with missing OpenAI API key."""
         from src.utils import select_alternatives_with_llm
-        result = select_alternatives_with_llm(
-            "missing",
-            ["alt1"],
+        llm_config = AppLLMConfig(
             provider="openai",
             model="gpt-4",
             temperature=0.7,
             max_tokens=500,
             timeout_seconds=30,
+            openai_api_key=None,
+        )
+        result = select_alternatives_with_llm(
+            "missing",
+            ["alt1"],
             max_alternatives=3
+            , llm_config=llm_config
         )
         assert result == []
     
