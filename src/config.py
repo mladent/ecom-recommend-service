@@ -231,16 +231,34 @@ class APIConfig:
     workers: int = 4
 
 
+@dataclass
+class MLflowConfig:
+    """Configuration for MLflow experiment tracking."""
+    
+    enabled: bool = False
+    tracking_uri: str = "mlruns"
+    experiment_name: str = "bundle-recommendation-engine"
+    run_name_prefix: str = ""
+    log_system_metrics: bool = True
+    
+    def __post_init__(self):
+        """Validate MLflow configuration."""
+        if self.enabled and not self.tracking_uri:
+            raise ValueError("tracking_uri must be set when MLflow is enabled")
+        if self.enabled and not self.experiment_name:
+            raise ValueError("experiment_name must be set when MLflow is enabled")
+
+
 # ============================================================================
 # FACTORY FUNCTION for Loading All Configurations
 # ============================================================================
 
-def load_config() -> tuple[PipelineConfig, EngineConfig, APIConfig, LLMConfig, CacheConfig]:
+def load_config() -> tuple[PipelineConfig, EngineConfig, APIConfig, LLMConfig, CacheConfig, MLflowConfig]:
     """
     Load all configuration objects from environment and YAML.
     
     Returns:
-        Tuple of (PipelineConfig, EngineConfig, APIConfig, LLMConfig, CacheConfig)
+        Tuple of (PipelineConfig, EngineConfig, APIConfig, LLMConfig, CacheConfig, MLflowConfig)
     """
     yaml_config = _load_yaml_config()
     
@@ -352,7 +370,17 @@ def load_config() -> tuple[PipelineConfig, EngineConfig, APIConfig, LLMConfig, C
         workers=int(os.getenv("API_WORKERS", 4)),
     )
     
-    return pipeline, engine, api, llm, cache
+    # Build MLflowConfig
+    mlflow_cfg = yaml_config.get("mlflow", {})
+    mlflow = MLflowConfig(
+        enabled=_env_bool("MLFLOW_ENABLED", mlflow_cfg.get("enabled", False)),
+        tracking_uri=os.getenv("MLFLOW_TRACKING_URI", mlflow_cfg.get("tracking_uri", "mlruns")),
+        experiment_name=os.getenv("MLFLOW_EXPERIMENT_NAME", mlflow_cfg.get("experiment_name", "bundle-recommendation-engine")),
+        run_name_prefix=os.getenv("MLFLOW_RUN_NAME_PREFIX", mlflow_cfg.get("run_name_prefix", "")),
+        log_system_metrics=_env_bool("MLFLOW_LOG_SYSTEM_METRICS", mlflow_cfg.get("log_system_metrics", True)),
+    )
+    
+    return pipeline, engine, api, llm, cache, mlflow
 
 
 YAML_CONFIG = _load_yaml_config()

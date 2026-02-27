@@ -4,6 +4,7 @@ import os
 import pickle
 import logging
 import hashlib
+import time
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict, Optional, Union
@@ -606,12 +607,14 @@ class BundleRecommendationEngine:
         self,
         engine_config: Optional[EngineConfig] = None,
         pipeline_config: Optional[PipelineConfig] = None,
+        mlflow_tracker: Optional['MLflowExperimentTracker'] = None,
     ):
         """Initialize the recommendation engine.
 
         Args:
             engine_config: Optional typed engine configuration.
             pipeline_config: Optional typed pipeline configuration for OOS/LLM settings.
+            mlflow_tracker: Optional MLflow tracker for experiment logging.
         """
         if engine_config is None or pipeline_config is None:
             loaded_pipeline, loaded_engine, _, _, _ = load_config()
@@ -625,6 +628,7 @@ class BundleRecommendationEngine:
         self.transactions = None
         self.bundles = None
         self.recommendations_cache = {}
+        self.mlflow_tracker = mlflow_tracker
 
     def _get_oos_api_key_for_provider(self, provider: str) -> Optional[str]:
         """Get API key for the configured OOS LLM provider."""
@@ -682,10 +686,51 @@ class BundleRecommendationEngine:
             else self.pipeline_config.train_test_split
         )
 
+        # Log training parameters to MLflow
+        if self.mlflow_tracker and self.mlflow_tracker.enabled:
+            self.mlflow_tracker.log_params({
+                "train_test_split": validation_split_value,
+                "random_state": self.engine_config.random_state,
+                "n_transactions": len(transactions),
+                "n_bundles": len(bundles),
+            })
+
         metrics = {}
+        total_train_start = time.time()
+        
         for name, recommender in self.recommenders.items():
             logger.info(f"Training {name}...")
-            metrics[name] = recommender.fit(transactions, bundles, validation_split_value)
+            
+            # Time individual model training
+            model_start = time.time()
+            model_metrics = recommender.fit(transactions, bundles, validation_split_value)
+            model_duration = time.time() - model_start
+            
+            metrics[name] = model_metrics
+            
+            # Log model-specific metrics and timing to MLflow
+            if self.mlflow_tracker and self.mlflow_tracker.enabled:
+                # Log model parameters
+                if isinstance(recommender, NaiveBayesBundleRecommender):
+                    self.mlflow_tracker.log_param("nb_model_type", recommender.model_type)
+                elif isinstance(recommender, SVMBundleRecommender):
+                    self.mlflow_tracker.log_params({
+                        "svm_kernel": self.engine_config.svm_kernel,
+                        "svm_c": self.engine_config.svm_c,
+                    })
+                
+                # Log training time
+                self.mlflow_tracker.log_metric(f"training_time_{name.lower()}", model_duration)
+                
+                # Log model metrics with model name prefix
+                for metric_name, metric_value in model_metrics.items():
+                    self.mlflow_tracker.log_metric(f"{name.lower()}_{metric_name}", metric_value)
+
+        total_train_duration = time.time() - total_train_start
+        
+        # Log total training time
+        if self.mlflow_tracker and self.mlflow_tracker.enabled:
+            self.mlflow_tracker.log_metric("training_time_total", total_train_duration)
 
         return metrics
 
@@ -709,12 +754,60 @@ class BundleRecommendationEngine:
         self.transactions = transactions
         self.bundles = bundles
 
+        # Log k-fold parameters to MLflow
+        if self.mlflow_tracker and self.mlflow_tracker.enabled:
+            self.mlflow_tracker.log_params({
+                "n_splits": n_splits,
+                "random_state": self.engine_config.random_state,
+                "n_transactions": len(transactions),
+                "n_bundles": len(bundles),
+                "validation_strategy": "kfold",
+            })
+
         splitter = KFoldSplit(n_splits=n_splits)
         metrics = {}
+        total_train_start = time.time()
+        fold_times = []
 
         for name, recommender in self.recommenders.items():
             logger.info(f"Training {name} with {n_splits}-fold cross-validation...")
-            metrics[name] = recommender.fit_with_splitter(transactions, bundles, splitter)
+            
+            # Time model training
+            model_start = time.time()
+            model_metrics = recommender.fit_with_splitter(transactions, bundles, splitter)
+            model_duration = time.time() - model_start
+            fold_times.append(model_duration)
+            
+            metrics[name] = model_metrics
+            
+            # Log model-specific metrics and timing to MLflow
+            if self.mlflow_tracker and self.mlflow_tracker.enabled:
+                # Log model parameters
+                if isinstance(recommender, NaiveBayesBundleRecommender):
+                    self.mlflow_tracker.log_param("nb_model_type", recommender.model_type)
+                elif isinstance(recommender, SVMBundleRecommender):
+                    self.mlflow_tracker.log_params({
+                        "svm_kernel": self.engine_config.svm_kernel,
+                        "svm_c": self.engine_config.svm_c,
+                    })
+                
+                # Log training time
+                self.mlflow_tracker.log_metric(f"training_time_{name.lower()}", model_duration)
+                
+                # Log model metrics with model name prefix
+                for metric_name, metric_value in model_metrics.items():
+                    self.mlflow_tracker.log_metric(f"{name.lower()}_{metric_name}", metric_value)
+
+        total_train_duration = time.time() - total_train_start
+        
+        # Log total training time and k-fold timing statistics
+        if self.mlflow_tracker and self.mlflow_tracker.enabled:
+            self.mlflow_tracker.log_metrics({
+                "training_time_total": total_train_duration,
+                "training_time_per_fold_avg": total_train_duration / n_splits,
+                "training_time_per_fold_min": min(fold_times) if fold_times else 0,
+                "training_time_per_fold_max": max(fold_times) if fold_times else 0,
+            })
 
         return metrics
 
@@ -738,12 +831,54 @@ class BundleRecommendationEngine:
         self.transactions = transactions
         self.bundles = bundles
 
+        # Log random split parameters to MLflow
+        if self.mlflow_tracker and self.mlflow_tracker.enabled:
+            self.mlflow_tracker.log_params({
+                "test_size": test_size,
+                "train_test_split": 1.0 - test_size,
+                "random_state": self.engine_config.random_state,
+                "n_transactions": len(transactions),
+                "n_bundles": len(bundles),
+                "validation_strategy": "random_split",
+            })
+
         splitter = RandomSplit(test_size=test_size)
         metrics = {}
+        total_train_start = time.time()
 
         for name, recommender in self.recommenders.items():
             logger.info(f"Training {name} with random split (test_size={test_size})...")
-            metrics[name] = recommender.fit_with_splitter(transactions, bundles, splitter)
+            
+            # Time model training
+            model_start = time.time()
+            model_metrics = recommender.fit_with_splitter(transactions, bundles, splitter)
+            model_duration = time.time() - model_start
+            
+            metrics[name] = model_metrics
+            
+            # Log model-specific metrics and timing to MLflow
+            if self.mlflow_tracker and self.mlflow_tracker.enabled:
+                # Log model parameters
+                if isinstance(recommender, NaiveBayesBundleRecommender):
+                    self.mlflow_tracker.log_param("nb_model_type", recommender.model_type)
+                elif isinstance(recommender, SVMBundleRecommender):
+                    self.mlflow_tracker.log_params({
+                        "svm_kernel": self.engine_config.svm_kernel,
+                        "svm_c": self.engine_config.svm_c,
+                    })
+                
+                # Log training time
+                self.mlflow_tracker.log_metric(f"training_time_{name.lower()}", model_duration)
+                
+                # Log model metrics with model name prefix
+                for metric_name, metric_value in model_metrics.items():
+                    self.mlflow_tracker.log_metric(f"{name.lower()}_{metric_name}", metric_value)
+
+        total_train_duration = time.time() - total_train_start
+        
+        # Log total training time
+        if self.mlflow_tracker and self.mlflow_tracker.enabled:
+            self.mlflow_tracker.log_metric("training_time_total", total_train_duration)
 
         return metrics
 

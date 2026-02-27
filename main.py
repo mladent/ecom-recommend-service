@@ -4,9 +4,10 @@ import os
 import sys
 import logging
 import argparse
+import subprocess
 from pathlib import Path
 
-from src.config import validate_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C, MODELS_PATH
+from src.config import validate_config, load_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C, MODELS_PATH
 from src.data_pipeline import DataPipeline
 from src.data_evaluator import DataEvaluator
 from src.recommendation_engine import (
@@ -14,6 +15,7 @@ from src.recommendation_engine import (
     NaiveBayesBundleRecommender,
     SVMBundleRecommender,
 )
+from src.mlflow_client import MLflowExperimentTracker
 from src.utils import setup_logging, format_recommendations
 
 logger = logging.getLogger(__name__)
@@ -136,8 +138,13 @@ def regenerate_bundles_only():
         return None
 
 
-def train_recommenders(pipeline: DataPipeline):
-    """Train recommendation engine."""
+def train_recommenders(pipeline: DataPipeline, mlflow_tracker=None):
+    """Train recommendation engine.
+    
+    Args:
+        pipeline: DataPipeline instance with processed data
+        mlflow_tracker: Optional MLflowExperimentTracker for experiment logging
+    """
     logger.info("Training recommendation engine...")
 
     # Validate pipeline data
@@ -159,8 +166,8 @@ def train_recommenders(pipeline: DataPipeline):
         logger.error("No transactions or bundles available")
         return None
 
-    # Initialize engine
-    engine = BundleRecommendationEngine()
+    # Initialize engine with MLflow tracker
+    engine = BundleRecommendationEngine(mlflow_tracker=mlflow_tracker)
 
     # Add Naive Bayes recommender
     logger.info("Adding Naive Bayes recommender...")
@@ -186,6 +193,18 @@ def train_recommenders(pipeline: DataPipeline):
     logger.info("Saving trained model...")
     model_file = os.path.join(MODELS_PATH, "recommendation_engine.pkl")
     engine.save_model(model_file)
+    
+    # Log model artifact to MLflow
+    if mlflow_tracker and mlflow_tracker.enabled:
+        mlflow_tracker.log_artifact(model_file, "models")
+        
+        # Log dataset statistics
+        dataset_stats = {
+            "n_transactions": len(transactions),
+            "n_bundles": len(bundles),
+            "n_unique_items": len(set(item for trans in transactions for item in trans)),
+        }
+        mlflow_tracker.log_dict(dataset_stats, "dataset_stats.json")
 
     logger.info(f"Engine statistics: {engine.get_engine_stats()}")
 
@@ -331,6 +350,16 @@ def main():
         action="store_true",
         help="Launch REST API server for bundle recommendations",
     )
+    parser.add_argument(
+        "--mlflow",
+        action="store_true",
+        help="Enable MLflow experiment tracking for training runs",
+    )
+    parser.add_argument(
+        "--mlflow-ui",
+        action="store_true",
+        help="Launch MLflow UI after training (implies --mlflow)",
+    )
 
     args = parser.parse_args()
 
@@ -343,6 +372,21 @@ def main():
 
     # Validate configuration
     validate_config()
+    
+    # Load configuration (including MLflow config)
+    _, _, _, _, _, mlflow_config = load_config()
+    
+    # Initialize MLflow tracker if requested
+    mlflow_tracker = None
+    if args.mlflow or args.mlflow_ui:
+        # Override config to enable MLflow
+        mlflow_config.enabled = True
+        mlflow_tracker = MLflowExperimentTracker(mlflow_config)
+        if mlflow_tracker.enabled:
+            logger.info(f"MLflow tracking enabled (experiment: {mlflow_config.experiment_name})")
+            logger.info(f"MLflow tracking URI: {mlflow_config.tracking_uri}")
+        else:
+            logger.warning("MLflow not available. Install with: pip install mlflow")
 
     # Execute pipeline
     if args.download or args.full:
@@ -363,9 +407,30 @@ def main():
         pipeline = prepare_data()  # Ensure data is prepared
         if not pipeline:
             return 1
-        engine = train_recommenders(pipeline)
+        
+        # Wrap training in MLflow run if enabled
+        if mlflow_tracker and mlflow_tracker.enabled:
+            with mlflow_tracker.start_run(run_name="training_run"):
+                mlflow_tracker.set_tag("pipeline_stage", "training")
+                mlflow_tracker.set_tag("model_type", "bundle_recommendation")
+                engine = train_recommenders(pipeline, mlflow_tracker=mlflow_tracker)
+        else:
+            engine = train_recommenders(pipeline)
+        
         if not engine:
             return 1
+        
+        # Launch MLflow UI if requested
+        if args.mlflow_ui:
+            logger.info("Launching MLflow UI...")
+            logger.info("Access the UI at: http://127.0.0.1:5000")
+            logger.info("Press Ctrl+C to stop the UI server")
+            try:
+                subprocess.run(["mlflow", "ui", "--backend-store-uri", mlflow_config.tracking_uri])
+            except KeyboardInterrupt:
+                logger.info("MLflow UI stopped")
+            except FileNotFoundError:
+                logger.error("MLflow CLI not found. Ensure mlflow is installed: pip install mlflow")
 
     if args.demo or args.full:
         # Load trained engine
