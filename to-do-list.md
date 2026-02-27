@@ -949,6 +949,81 @@
 
 ### MLflow Integration - Foundation
 
+- [ ] **MLflow Implementation Plan (Detailed)** (P0)
+  - **Goal:** Track model quality, system performance, and LLM operations with MLflow (local `mlruns/` backend).
+  - **Files:** [requirements.txt](requirements.txt), [src/config.py](src/config.py), [config/settings.yaml](config/settings.yaml), [main.py](main.py)
+  - **Tasks (Step-by-Step):**
+    1. **Dependencies & Config**
+       - Add `mlflow` to [requirements.txt](requirements.txt)
+       - Add `mlflow_tracking_uri`, `mlflow_experiment_name`, `mlflow_enabled` to [src/config.py](src/config.py) + [config/settings.yaml](config/settings.yaml)
+       - Default to local backend (`mlruns/`) and experiment name `bundle-recommendation-engine`
+    2. **Tracking Wrapper & Decorators**
+       - Create [src/mlflow_client.py](src/mlflow_client.py) with `MLflowExperimentTracker`
+       - Implement decorators:
+         - `@log_model_training` for model metrics + parameters
+         - `@log_training_duration` for per-model and total timing
+         - `@log_llm_operation` for aggregated LLM stats
+       - Support `mlflow_enabled` flag (no-op when disabled)
+    3. **Model Performance Metrics (Standard)**
+       - Instrument [src/recommendation_engine.py](src/recommendation_engine.py):
+         - `fit_all()`, `fit_all_with_kfold()`, `fit_all_with_random_split()`
+       - Log metrics: `accuracy`, `precision`, `recall`, `f1`
+       - For k-fold: log `std_accuracy`, `std_precision`, `std_recall`, `std_f1`, `n_splits`
+       - Log params: `svm_kernel`, `svm_c`, `nb_model_type`, `train_test_split`, `random_state`
+    4. **System Performance Metrics**
+       - Capture training time per model: `training_time_nb`, `training_time_svm`
+       - Capture total training time: `training_time_total`
+       - For k-fold: `training_time_per_fold_avg`, `training_time_per_fold_min`, `training_time_per_fold_max`
+       - Capture data pipeline times (if executed in same run):
+         - `data_preprocess_time`, `basket_creation_time`, `bundle_generation_time`
+    5. **LLM Metrics (Aggregated)**
+       - Track aggregated LLM stats across operations in [src/llm_client.py](src/llm_client.py):
+         - `llm_total_calls`, `llm_cache_hit_rate`, `llm_avg_latency_ms`
+         - `llm_provider_distribution` (logged as params or JSON artifact)
+         - `llm_quota_error_count`, `llm_failure_count`
+       - Track per-operation counters for:
+         - `enrich_categories`, `extract_contexts`, `batch_score_anomalies`, `select_alternatives`
+    6. **Artifacts & Data Lineage**
+       - Log model pickle artifacts (e.g., `models/recommendation_engine.pkl`)
+       - Log dataset stats artifact (JSON): row count, bundle count, feature count
+       - Log bundle statistics artifact (JSON): size distribution, support summary
+       - Log evaluation table (CSV) for per-model metrics
+    7. **Unified MLflow Example Script** (P0)
+      - **File:** [examples_mlflow.py](examples_mlflow.py) (single file, multiple modes)
+      - **CLI Arguments:**
+        - `--training` - Basic training run with metrics logging
+        - `--tuning` - Hyperparameter sweep across kernel/C values
+        - `--llm-analysis` - Track LLM cache hits and provider usage
+        - `--comparison` - Side-by-side model comparison
+      - **Features:**
+        - Load config, initialize MLflow, create runs
+        - Log metrics, parameters, artifacts per mode
+        - Display run summaries and MLflow links
+        - Support `--mlflow-ui` flag to auto-launch UI after run
+      - **Usage Examples:**
+        ```bash
+        python examples_mlflow.py --training
+        python examples_mlflow.py --tuning --mlflow-ui
+        python examples_mlflow.py --llm-analysis
+        python examples_mlflow.py --comparison
+        ```
+      - **Acceptance Criteria:** All 4 modes work; MLflow runs created; artifacts logged
+    8. **CLI / Main Integration**
+       - Add flags in [main.py](main.py):
+         - `--mlflow` (enable tracking), `--mlflow-ui` (launch UI)
+       - Ensure `--train` and `--full` run inside MLflow run contexts
+    9. **Testing**
+       - Add [tests/test_mlflow_integration.py](tests/test_mlflow_integration.py)
+       - Mock MLflow client and assert metric/param logging
+       - Ensure tests pass when MLflow disabled
+  - **Acceptance Criteria:**
+    - MLflow runs are created for training paths
+    - All standard metrics + timing metrics visible in MLflow UI
+    - Aggregated LLM metrics logged without per-call overhead
+    - Model artifacts retrievable from MLflow
+    - Example scripts run and create valid MLflow runs
+    - Tests pass with MLflow mocked/disabled
+
 - [ ] **MLflow Setup & Configuration** (P0)
   - **Files:** [src/config.py](src/config.py), [config/settings.yaml](config/settings.yaml)
   - **Tasks:**
