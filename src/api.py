@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from flask import Flask, jsonify, request, send_from_directory, send_file, Response
 from flask_cors import CORS
 
+from src.config import load_config
 from src.recommendation_engine import BundleRecommendationEngine
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,11 @@ def get_engine() -> BundleRecommendationEngine:
     """Lazy load and return the recommendation engine."""
     global _engine
     if _engine is None:
-        _engine = BundleRecommendationEngine()
+        pipeline_config, engine_config, _, _, _ = load_config()
+        _engine = BundleRecommendationEngine(
+            engine_config=engine_config,
+            pipeline_config=pipeline_config,
+        )
         if not _engine.load_model("models/recommendation_engine.pkl"):
             logger.warning("Failed to load recommendation engine model")
             raise RuntimeError("Recommendation engine model not found. Train the model first.")
