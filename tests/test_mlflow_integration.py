@@ -18,6 +18,7 @@ from src.recommendation_engine import (
     NaiveBayesBundleRecommender,
     SVMBundleRecommender,
 )
+from src.utils import init_mlflow_tracking
 
 
 # ============================================================================
@@ -186,6 +187,38 @@ class TestMLflowExperimentTracker:
         assert flattened["data_train_size"] == 0.8
 
 
+class TestMLflowInitializationHelper:
+    """Tests for init_mlflow_tracking utility helper."""
+
+    @patch('src.mlflow_client.MLflowExperimentTracker')
+    @patch('src.config.load_config')
+    def test_init_mlflow_tracking_enabled_override(self, mock_load_config, mock_tracker_class):
+        """Test helper enables MLflow when override is True."""
+        mlflow_cfg = MLflowConfig(enabled=False)
+        mock_load_config.return_value = (None, None, None, None, None, mlflow_cfg)
+
+        tracker_instance = Mock()
+        tracker_instance.enabled = True
+        tracker_instance.config = MLflowConfig(enabled=True, tracking_uri="mlruns", experiment_name="test")
+        mock_tracker_class.return_value = tracker_instance
+
+        tracker = init_mlflow_tracking(enabled_override=True)
+
+        assert tracker is tracker_instance
+        assert mlflow_cfg.enabled is True
+        mock_tracker_class.assert_called_once()
+
+    @patch('src.config.load_config')
+    def test_init_mlflow_tracking_returns_none_when_disabled(self, mock_load_config):
+        """Test helper returns None when MLflow remains disabled."""
+        mlflow_cfg = MLflowConfig(enabled=False)
+        mock_load_config.return_value = (None, None, None, None, None, mlflow_cfg)
+
+        tracker = init_mlflow_tracking()
+
+        assert tracker is None
+
+
 # ============================================================================
 # RECOMMENDATION ENGINE MLflow INTEGRATION TESTS
 # ============================================================================
@@ -226,6 +259,7 @@ class TestBundleRecommendationEngineMLflow:
         assert "precision" in metrics["nb"]
         assert "recall" in metrics["nb"]
         assert "f1" in metrics["nb"]
+        assert "roc_auc" in metrics["nb"]
     
     def test_engine_without_tracker(self, sample_data):
         """Test engine works without tracker."""
@@ -238,6 +272,7 @@ class TestBundleRecommendationEngineMLflow:
         
         assert "nb" in metrics
         assert "accuracy" in metrics["nb"]
+        assert "roc_auc" in metrics["nb"]
     
     @patch('src.mlflow_client.MLFLOW_AVAILABLE', False)
     def test_engine_with_unavailable_mlflow(self, sample_data):
@@ -401,6 +436,8 @@ class TestMLflowIntegration:
         assert "nb" in metrics
         assert "accuracy" in metrics["nb"]
         assert "std_accuracy" in metrics["nb"]
+        assert "roc_auc" in metrics["nb"]
+        assert "std_roc_auc" in metrics["nb"]
         assert "n_splits" in metrics["nb"]
 
 

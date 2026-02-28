@@ -74,6 +74,35 @@ class LLMQuotaExceededError(RuntimeError):
     """Raised when LLM provider reports insufficient quota."""
 
 
+def init_mlflow_tracking(enabled_override: Optional[bool] = None):
+    """Initialize and return an MLflow tracker from app config.
+
+    Args:
+        enabled_override: Optional override for the MLflow enabled flag.
+
+    Returns:
+        MLflowExperimentTracker instance when enabled/available, otherwise None.
+    """
+    from src.config import load_config
+    from src.mlflow_client import MLflowExperimentTracker
+
+    _, _, _, _, _, mlflow_config = load_config()
+    if enabled_override is not None:
+        mlflow_config.enabled = enabled_override
+
+    if not mlflow_config.enabled:
+        return None
+
+    tracker = MLflowExperimentTracker(mlflow_config)
+    if not tracker.enabled:
+        logger.warning("MLflow requested but not available. Install with: pip install mlflow")
+        return None
+
+    logger.info(f"MLflow tracking enabled (experiment: {mlflow_config.experiment_name})")
+    logger.info(f"MLflow tracking URI: {mlflow_config.tracking_uri}")
+    return tracker
+
+
 def setup_logging(level: int = logging.INFO) -> None:
     """
     Setup logging configuration.

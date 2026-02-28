@@ -227,7 +227,7 @@ class _NoOpContext:
     """No-op context manager for when MLflow is disabled."""
     
     def __enter__(self):
-        return self
+        return None
     
     def __exit__(self, *args):
         return False
