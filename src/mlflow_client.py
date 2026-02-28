@@ -2,17 +2,33 @@
 
 import time
 import functools
-from typing import Dict, Any, Optional, Callable, TYPE_CHECKING
-from pathlib import Path
+from typing import Dict, Any, Optional, Callable, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from .config import MLflowConfig
 
 try:
-    import mlflow
+    import mlflow  # type: ignore[import]
+    import mlflow.sklearn as mlflow_sklearn  # type: ignore[import]
     MLFLOW_AVAILABLE = True
 except ImportError:
+    mlflow = None  # type: ignore[assignment]
+    mlflow_sklearn = None  # type: ignore[assignment]
     MLFLOW_AVAILABLE = False
+
+
+def _get_mlflow() -> Any:
+    """Return mlflow module reference for typed access in guarded code paths."""
+    if mlflow is None:
+        raise RuntimeError("MLflow is not available. Install with: pip install mlflow")
+    return cast(Any, mlflow)
+
+
+def _get_mlflow_sklearn() -> Any:
+    """Return mlflow.sklearn reference for typed access in guarded code paths."""
+    if mlflow_sklearn is None:
+        raise RuntimeError("MLflow sklearn flavor is not available")
+    return cast(Any, mlflow_sklearn)
 
 
 class MLflowExperimentTracker:
@@ -35,11 +51,12 @@ class MLflowExperimentTracker:
         self.config = config
         
         if config and config.enabled and MLFLOW_AVAILABLE:
+            mlflow_mod = _get_mlflow()
             self.enabled = True
-            mlflow.set_tracking_uri(config.tracking_uri)
-            mlflow.set_experiment(config.experiment_name)
+            mlflow_mod.set_tracking_uri(config.tracking_uri)
+            mlflow_mod.set_experiment(config.experiment_name)
             if config.log_system_metrics:
-                mlflow.enable_system_metrics_logging()
+                mlflow_mod.enable_system_metrics_logging()
         
     def start_run(self, run_name: Optional[str] = None, **kwargs):
         """
@@ -58,7 +75,7 @@ class MLflowExperimentTracker:
         if run_name and self.config and self.config.run_name_prefix:
             run_name = f"{self.config.run_name_prefix}{run_name}"
         
-        return mlflow.start_run(run_name=run_name, **kwargs)
+        return _get_mlflow().start_run(run_name=run_name, **kwargs)
     
     def log_params(self, params: Dict[str, Any]):
         """
@@ -72,7 +89,7 @@ class MLflowExperimentTracker:
         
         # MLflow can't handle nested dicts, so flatten them
         flat_params = self._flatten_dict(params)
-        mlflow.log_params(flat_params)
+        _get_mlflow().log_params(flat_params)
     
     def log_param(self, key: str, value: Any):
         """
@@ -84,7 +101,7 @@ class MLflowExperimentTracker:
         """
         if not self.enabled:
             return
-        mlflow.log_param(key, value)
+        _get_mlflow().log_param(key, value)
     
     def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None):
         """
@@ -96,7 +113,7 @@ class MLflowExperimentTracker:
         """
         if not self.enabled:
             return
-        mlflow.log_metrics(metrics, step=step)
+        _get_mlflow().log_metrics(metrics, step=step)
     
     def log_metric(self, key: str, value: float, step: Optional[int] = None):
         """
@@ -109,7 +126,7 @@ class MLflowExperimentTracker:
         """
         if not self.enabled:
             return
-        mlflow.log_metric(key, value, step=step)
+        _get_mlflow().log_metric(key, value, step=step)
     
     def log_artifact(self, local_path: str, artifact_path: Optional[str] = None):
         """
@@ -121,7 +138,7 @@ class MLflowExperimentTracker:
         """
         if not self.enabled:
             return
-        mlflow.log_artifact(local_path, artifact_path=artifact_path)
+        _get_mlflow().log_artifact(local_path, artifact_path=artifact_path)
     
     def log_dict(self, dictionary: Dict[str, Any], artifact_file: str):
         """
@@ -133,7 +150,7 @@ class MLflowExperimentTracker:
         """
         if not self.enabled:
             return
-        mlflow.log_dict(dictionary, artifact_file)
+        _get_mlflow().log_dict(dictionary, artifact_file)
     
     def log_model(self, model, artifact_path: str, **kwargs):
         """
@@ -150,7 +167,7 @@ class MLflowExperimentTracker:
         # Use sklearn flavor for scikit-learn models
         from sklearn.base import BaseEstimator
         if isinstance(model, BaseEstimator):
-            mlflow.sklearn.log_model(model, artifact_path, **kwargs)
+            _get_mlflow_sklearn().log_model(model, artifact_path, **kwargs)
         else:
             # Generic pickle logging
             import pickle
@@ -169,7 +186,7 @@ class MLflowExperimentTracker:
         """
         if not self.enabled:
             return
-        mlflow.set_tags(tags)
+        _get_mlflow().set_tags(tags)
     
     def set_tag(self, key: str, value: Any):
         """
@@ -181,7 +198,7 @@ class MLflowExperimentTracker:
         """
         if not self.enabled:
             return
-        mlflow.set_tag(key, value)
+        _get_mlflow().set_tag(key, value)
     
     @staticmethod
     def _flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '_') -> Dict[str, Any]:
