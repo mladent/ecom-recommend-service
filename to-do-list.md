@@ -949,6 +949,11 @@
 
 ### MLflow Integration - Foundation
 
+**Status Update (2026-02-28):**
+- ✅ Implemented: dependency/config wiring, MLflow tracker wrapper, training metric logging, CLI integration, `examples_mlflow.py`, and `tests/test_mlflow_integration.py`
+- ✅ Commits: `ee3cec9` (foundation), `26cb461` (mlflow typing fix), `578b96f` + `acb409d` (load_config tuple updates), `e9d0a8d` (SVC kernel typing fix)
+- ⚠️ Partial: artifacts/data-lineage requirements and advanced LLM aggregated metrics are not fully complete yet
+
 - [ ] **MLflow Implementation Plan (Detailed)** (P0)
   - **Goal:** Track model quality, system performance, and LLM operations with MLflow (local `mlruns/` backend).
   - **Files:** [requirements.txt](requirements.txt), [src/config.py](src/config.py), [config/settings.yaml](config/settings.yaml), [main.py](main.py)
@@ -1024,7 +1029,7 @@
     - Example scripts run and create valid MLflow runs
     - Tests pass with MLflow mocked/disabled
 
-- [ ] **MLflow Setup & Configuration** (P0)
+- [ ] **MLflow Setup & Configuration** (P0) *(mostly done; `init_mlflow_tracking()` in `src/utils.py` still pending)*
   - **Files:** [src/config.py](src/config.py), [config/settings.yaml](config/settings.yaml)
   - **Tasks:**
     - Add MLflow tracking URI configuration (local backend or remote server)
@@ -1034,7 +1039,7 @@
     - Create initialization function `init_mlflow_tracking()` in [src/utils.py](src/utils.py)
   - **Acceptance Criteria:** MLflow CLI shows active experiment; local backend accessible
 
-- [ ] **MLflow: Training Metrics & Parameters Logging** (P0)
+- [ ] **MLflow: Training Metrics & Parameters Logging** (P0) *(partially done in `src/recommendation_engine.py`; ROC-AUC/tagging gaps remain)*
   - **Files:** [src/recommendation_engine.py](src/recommendation_engine.py), [src/data_splitter.py](src/data_splitter.py)
   - **Tasks:**
     - Log hyperparameters (kernel, C, gamma for SVM; alpha for NB) before training
@@ -1045,7 +1050,7 @@
     - Wrap training calls with MLflow context managers (`mlflow.start_run()`)
   - **Acceptance Criteria:** Metrics visible in MLflow UI; runs organized by experiment
 
-- [ ] **MLflow: Data & Model Artifacts Logging** (P0)
+- [ ] **MLflow: Data & Model Artifacts Logging** (P0) *(partially done in `main.py`; full lineage/artifact scope still pending)*
   - **Files:** [src/data_evaluator.py](src/data_evaluator.py), [main.py](main.py)
   - **Tasks:**
     - Log data statistics as artifact (JSON): row count, bundle count, sparsity, class balance
