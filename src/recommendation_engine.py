@@ -7,7 +7,7 @@ import hashlib
 import time
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, Dict, Optional, Union, TYPE_CHECKING
+from typing import List, Tuple, Dict, Optional, Union, TYPE_CHECKING, Literal, cast
 from datetime import datetime
 from abc import ABC, abstractmethod
 
@@ -63,6 +63,8 @@ from src.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+SVMKernel = Literal["linear", "poly", "rbf", "sigmoid", "precomputed"]
 
 
 class BaseRecommender(ABC):
@@ -404,14 +406,15 @@ class SVMBundleRecommender(BaseRecommender):
             config=config,
             default_validation_split=default_validation_split,
         )
-        self.kernel = kernel if kernel is not None else self.config.svm_kernel
-        self.C = C if C is not None else self.config.svm_c
+        resolved_kernel = kernel if kernel is not None else self.config.svm_kernel
+        self.kernel: SVMKernel = cast(SVMKernel, resolved_kernel)
+        self.C: float = C if C is not None else self.config.svm_c
         self.model = SVC(
             kernel=self.kernel,
             C=self.C,
             probability=True,
             random_state=self.config.random_state,
-        )  # type: ignore[arg-type]
+        )
         self.mlb = MultiLabelBinarizer()
         self.scaler = StandardScaler()
         self.feature_names = None
@@ -524,7 +527,7 @@ class SVMBundleRecommender(BaseRecommender):
 
             # Fit model
             model = SVC(
-                kernel=self.kernel,  # type: ignore[arg-type]
+                kernel=self.kernel,
                 C=self.C,
                 probability=True,
                 random_state=self.config.random_state,
