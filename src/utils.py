@@ -5,12 +5,13 @@ import logging
 import os
 import re
 import hashlib
-from typing import List, Dict, Any, Optional, Tuple, cast
+import time
+from typing import List, Dict, Any, Optional, Tuple, cast, TypeVar, Callable
 from jsonschema import ValidationError, validate
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
-from .llm_client import LLMConfig, LLMClient
+from .llm_client import LLMConfig, LLMClient, LLMOperationTracker
 from src.config import LLMConfig as AppLLMConfig
 
 logger = logging.getLogger(__name__)
@@ -556,7 +557,15 @@ def enrich_categories_with_llm(
             api_key, endpoint, deployment, api_version, base_url
         )
         client = LLMClient(config)
-        result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
+        
+        # Track the LLM call
+        start_time = time.time()
+        try:
+            result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
+            _record_llm_call("enrich_categories", start_time, provider, cached=False, error=False)
+        except Exception as e:
+            _record_llm_call("enrich_categories", start_time, provider, cached=False, error=True)
+            raise
         
         _validate_json_schema(result, "llm_enrich_categories.json", "category enrichment")
         return {field: result.get(field, "NaN") for field in fields}
@@ -748,7 +757,15 @@ def batch_score_anomalies_with_llm(
             api_key, endpoint, deployment, api_version, base_url
         )
         client = LLMClient(config)
-        parsed: List[Dict[str, Any]] = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)  # type: ignore[assignment]
+        
+        # Track the LLM call
+        start_time = time.time()
+        try:
+            parsed: List[Dict[str, Any]] = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)  # type: ignore[assignment]
+            _record_llm_call("batch_score_anomalies", start_time, provider, cached=False, error=False)
+        except Exception as e:
+            _record_llm_call("batch_score_anomalies", start_time, provider, cached=False, error=True)
+            raise
         
         _validate_json_schema(parsed, "llm_batch_score_anomalies.json", "anomaly scoring")
         
@@ -841,7 +858,15 @@ def extract_contexts_with_llm(
             api_key, endpoint, deployment, api_version, base_url
         )
         client = LLMClient(config)
-        result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
+        
+        # Track the LLM call
+        start_time = time.time()
+        try:
+            result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
+            _record_llm_call("extract_contexts", start_time, provider, cached=False, error=False)
+        except Exception as e:
+            _record_llm_call("extract_contexts", start_time, provider, cached=False, error=True)
+            raise
         
         _validate_json_schema(result, "llm_extract_contexts.json", "context extraction")
         
@@ -901,6 +926,21 @@ def load_inventory_csv(path: str) -> Dict[str, bool]:
 def _candidate_hash(candidates: List[str]) -> str:
     payload = "|".join(sorted(candidates))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _record_llm_call(operation_name: str, start_time: float, provider: str, cached: bool = False, error: bool = False) -> None:
+    """Record an LLM operation call to the global tracker.
+    
+    Args:
+        operation_name: Name of the operation (e.g., 'select_alternatives')
+        start_time: Start time from time.time()
+        provider: LLM provider name
+        cached: Whether the result was from cache
+        error: Whether the operation encountered an error
+    """
+    latency_ms = (time.time() - start_time) * 1000
+    tracker = LLMOperationTracker()
+    tracker.record_operation(operation_name, latency_ms, cached=cached, provider=provider, error=error)
 
 
 def select_alternatives_with_llm(
@@ -981,7 +1021,15 @@ def select_alternatives_with_llm(
             api_key, endpoint, deployment, api_version, base_url
         )
         client = LLMClient(config)
-        result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
+        
+        # Track the LLM call
+        start_time = time.time()
+        try:
+            result = client.chat_completion_json(system_prompt=system_prompt, user_prompt=prompt)
+            _record_llm_call("select_alternatives", start_time, provider, cached=False, error=False)
+        except Exception as e:
+            _record_llm_call("select_alternatives", start_time, provider, cached=False, error=True)
+            raise
         
         # Handle both array and object responses
         if isinstance(result, list):

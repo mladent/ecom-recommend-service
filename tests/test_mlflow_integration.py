@@ -488,5 +488,196 @@ class TestMLflowEdgeCases:
         # Should not raise exceptions
 
 
+# ============================================================================
+# LLM OPERATION TRACKER TESTS
+# ============================================================================
+
+class TestLLMOperationTracker:
+    """Tests for LLMOperationTracker singleton."""
+    
+    def setup_method(self):
+        """Reset tracker before each test."""
+        from src.llm_client import LLMOperationTracker
+        # Get singleton and reset it
+        tracker = LLMOperationTracker()
+        tracker.reset()
+    
+    def test_tracker_singleton_pattern(self):
+        """Test that LLMOperationTracker is a singleton."""
+        from src.llm_client import LLMOperationTracker
+        tracker1 = LLMOperationTracker()
+        tracker2 = LLMOperationTracker()
+        
+        assert tracker1 is tracker2
+    
+    def test_record_single_operation(self):
+        """Test recording a single LLM operation."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        tracker.record_operation("enrich_categories", latency_ms=150.0, cached=False, provider="openai")
+        
+        stats = tracker.get_aggregated_stats()
+        assert "enrich_categories" in stats
+        assert stats["enrich_categories"].total_calls == 1
+        assert stats["enrich_categories"].total_latency_ms == 150.0
+    
+    def test_record_multiple_operations(self):
+        """Test recording multiple different operations."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        tracker.record_operation("enrich_categories", latency_ms=100.0, cached=False, provider="openai")
+        tracker.record_operation("select_alternatives", latency_ms=200.0, cached=False, provider="gemini")
+        tracker.record_operation("extract_contexts", latency_ms=150.0, cached=False, provider="openai")
+        
+        stats = tracker.get_aggregated_stats()
+        assert len(stats) == 3
+        assert stats["enrich_categories"].total_calls == 1
+        assert stats["select_alternatives"].total_calls == 1
+        assert stats["extract_contexts"].total_calls == 1
+    
+    def test_cache_hit_tracking(self):
+        """Test tracking cache hits."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        # Record 10 calls: 3 cached, 7 uncached
+        tracker.record_operation("enrich_categories", latency_ms=50.0, cached=True, provider="openai")
+        tracker.record_operation("enrich_categories", latency_ms=50.0, cached=True, provider="openai")
+        tracker.record_operation("enrich_categories", latency_ms=50.0, cached=True, provider="openai")
+        for _ in range(7):
+            tracker.record_operation("enrich_categories", latency_ms=150.0, cached=False, provider="openai")
+        
+        stats = tracker.get_operation_stats("enrich_categories")
+        assert stats.total_calls == 10
+        assert stats.cache_hits == 3
+        assert stats.cache_hit_rate == 30.0  # 3/10 * 100
+    
+    def test_provider_distribution(self):
+        """Test tracking provider distribution."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        tracker.record_operation("enrich_categories", latency_ms=100.0, provider="openai")
+        tracker.record_operation("enrich_categories", latency_ms=100.0, provider="openai")
+        tracker.record_operation("enrich_categories", latency_ms=100.0, provider="gemini")
+        tracker.record_operation("select_alternatives", latency_ms=200.0, provider="openai")
+        
+        stats = tracker.get_operation_stats("enrich_categories")
+        assert stats.provider_distribution["openai"] == 2
+        assert stats.provider_distribution["gemini"] == 1
+        
+        overall_dist = tracker.get_provider_distribution()
+        assert overall_dist["openai"] == 3
+        assert overall_dist["gemini"] == 1
+    
+    def test_error_tracking(self):
+        """Test tracking operation errors."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        tracker.record_operation("enrich_categories", latency_ms=100.0, error=False)
+        tracker.record_operation("enrich_categories", latency_ms=50.0, error=True)
+        tracker.record_operation("enrich_categories", latency_ms=100.0, error=False)
+        
+        stats = tracker.get_operation_stats("enrich_categories")
+        assert stats.total_calls == 3
+        assert stats.error_count == 1
+    
+    def test_average_latency_calculation(self):
+        """Test average latency calculation."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        tracker.record_operation("enrich_categories", latency_ms=100.0)
+        tracker.record_operation("enrich_categories", latency_ms=200.0)
+        tracker.record_operation("enrich_categories", latency_ms=300.0)
+        
+        stats = tracker.get_operation_stats("enrich_categories")
+        assert stats.avg_latency_ms == 200.0  # (100 + 200 + 300) / 3
+    
+    def test_overall_cache_hit_rate(self):
+        """Test overall cache hit rate calculation."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        # Operation 1: 2 cached out of 5
+        for _ in range(2):
+            tracker.record_operation("enrich_categories", latency_ms=50.0, cached=True)
+        for _ in range(3):
+            tracker.record_operation("enrich_categories", latency_ms=150.0, cached=False)
+        
+        # Operation 2: 1 cached out of 4
+        for _ in range(1):
+            tracker.record_operation("select_alternatives", latency_ms=50.0, cached=True)
+        for _ in range(3):
+            tracker.record_operation("select_alternatives", latency_ms=200.0, cached=False)
+        
+        # Overall: 3 cached out of 9 = 33.33%
+        overall_rate = tracker.get_overall_cache_hit_rate()
+        assert overall_rate == pytest.approx(33.33, abs=0.1)
+    
+    def test_to_mlflow_params(self):
+        """Test conversion to MLflow parameters."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        tracker.record_operation("enrich_categories", latency_ms=100.0, cached=True, provider="openai")
+        tracker.record_operation("enrich_categories", latency_ms=150.0, cached=False, provider="openai")
+        tracker.record_operation("select_alternatives", latency_ms=200.0, cached=False, provider="gemini")
+        
+        params = tracker.to_mlflow_params()
+        
+        # Check overall metrics
+        assert params["llm_total_calls"] == "3"
+        assert "llm_cache_hit_rate_percent" in params
+        assert "llm_provider_distribution" in params
+        
+        # Check per-operation metrics
+        assert "llm_enrich_categories_calls" in params
+        assert params["llm_enrich_categories_calls"] == "2"
+        assert "llm_select_alternatives_calls" in params
+        assert params["llm_select_alternatives_calls"] == "1"
+    
+    def test_to_mlflow_metrics(self):
+        """Test conversion to MLflow metrics (numeric)."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        tracker.record_operation("enrich_categories", latency_ms=100.0, cached=True)
+        tracker.record_operation("enrich_categories", latency_ms=150.0, cached=False)
+        
+        metrics = tracker.to_mlflow_metrics()
+        
+        # Check that all values are numeric
+        assert metrics["llm_total_calls"] == 2.0
+        assert isinstance(metrics["llm_cache_hit_rate_percent"], float)
+        assert isinstance(metrics["llm_enrich_categories_calls"], float)
+        assert isinstance(metrics["llm_enrich_categories_avg_latency_ms"], float)
+    
+    def test_tracker_reset(self):
+        """Test tracker reset functionality."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        
+        tracker.record_operation("enrich_categories", latency_ms=100.0)
+        assert tracker.get_total_calls() == 1
+        
+        tracker.reset()
+        assert tracker.get_total_calls() == 0
+        assert len(tracker.get_aggregated_stats()) == 0
+    
+    def test_empty_tracker_metrics(self):
+        """Test metrics from empty tracker."""
+        from src.llm_client import LLMOperationTracker
+        tracker = LLMOperationTracker()
+        tracker.reset()  # Ensure empty
+        
+        assert tracker.get_total_calls() == 0
+        assert tracker.get_overall_cache_hit_rate() == 0.0
+        assert tracker.to_mlflow_metrics()["llm_total_calls"] == 0.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
