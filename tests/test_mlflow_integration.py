@@ -550,6 +550,7 @@ class TestLLMOperationTracker:
             tracker.record_operation("enrich_categories", latency_ms=150.0, cached=False, provider="openai")
         
         stats = tracker.get_operation_stats("enrich_categories")
+        assert stats is not None
         assert stats.total_calls == 10
         assert stats.cache_hits == 3
         assert stats.cache_hit_rate == 30.0  # 3/10 * 100
@@ -565,6 +566,7 @@ class TestLLMOperationTracker:
         tracker.record_operation("select_alternatives", latency_ms=200.0, provider="openai")
         
         stats = tracker.get_operation_stats("enrich_categories")
+        assert stats is not None
         assert stats.provider_distribution["openai"] == 2
         assert stats.provider_distribution["gemini"] == 1
         
@@ -582,6 +584,7 @@ class TestLLMOperationTracker:
         tracker.record_operation("enrich_categories", latency_ms=100.0, error=False)
         
         stats = tracker.get_operation_stats("enrich_categories")
+        assert stats is not None
         assert stats.total_calls == 3
         assert stats.error_count == 1
     
@@ -595,6 +598,7 @@ class TestLLMOperationTracker:
         tracker.record_operation("enrich_categories", latency_ms=300.0)
         
         stats = tracker.get_operation_stats("enrich_categories")
+        assert stats is not None
         assert stats.avg_latency_ms == 200.0  # (100 + 200 + 300) / 3
     
     def test_overall_cache_hit_rate(self):
