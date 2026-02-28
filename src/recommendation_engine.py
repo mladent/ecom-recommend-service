@@ -7,9 +7,12 @@ import hashlib
 import time
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, Dict, Optional, Union
+from typing import List, Tuple, Dict, Optional, Union, TYPE_CHECKING
 from datetime import datetime
 from abc import ABC, abstractmethod
+
+if TYPE_CHECKING:
+    from src.mlflow_client import MLflowExperimentTracker
 
 from sklearn.naive_bayes import MultinomialNB, GaussianNB
 from sklearn.svm import SVC
@@ -73,7 +76,7 @@ class BaseRecommender(ABC):
     ):
         """Initialize base recommender."""
         if config is None or default_validation_split is None:
-            loaded_pipeline, loaded_engine, _, _, _ = load_config()
+            loaded_pipeline, loaded_engine, _, _, _, _ = load_config()
             self.config = config or loaded_engine
             self.default_validation_split = (
                 default_validation_split
@@ -617,7 +620,7 @@ class BundleRecommendationEngine:
             mlflow_tracker: Optional MLflow tracker for experiment logging.
         """
         if engine_config is None or pipeline_config is None:
-            loaded_pipeline, loaded_engine, _, _, _ = load_config()
+            loaded_pipeline, loaded_engine, _, _, _, _ = load_config()
             self.engine_config = engine_config or loaded_engine
             self.pipeline_config = pipeline_config or loaded_pipeline
         else:

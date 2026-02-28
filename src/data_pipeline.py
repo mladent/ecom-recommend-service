@@ -61,7 +61,7 @@ class DataPipeline:
         
         # Load configuration
         if config is None:
-            pipeline_config, _, _, _, _ = load_config()
+            pipeline_config, _, _, _, _, _ = load_config()
             self.config = pipeline_config
         else:
             self.config = config
