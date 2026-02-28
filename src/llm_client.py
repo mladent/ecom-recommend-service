@@ -18,7 +18,7 @@ Usage:
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, Type
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -555,7 +555,6 @@ class LLMClient:
 # LLM Operation Tracking - Aggregates metrics for MLflow logging
 # ============================================================================
 
-from dataclasses import field as dataclass_field
 from threading import Lock
 import time
 
@@ -569,7 +568,7 @@ class LLMOperationStats:
     cache_hits: int = 0
     total_latency_ms: float = 0.0
     error_count: int = 0
-    provider_distribution: Dict[str, int] = dataclass_field(default_factory=dict)
+    provider_distribution: Dict[str, int] = field(default_factory=dict)
     
     def add_call(self, latency_ms: float, cached: bool = False, provider: str = "unknown", error: bool = False) -> None:
         """Record a single LLM operation call."""
