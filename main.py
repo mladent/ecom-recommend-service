@@ -20,6 +20,7 @@ from src.recommendation_engine import (
     SVMBundleRecommender,
 )
 from src.utils import setup_logging, format_recommendations, init_mlflow_tracking
+from src.llm_client import LLMOperationTracker
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +274,18 @@ def train_recommenders(pipeline: DataPipeline, mlflow_tracker=None):
             os.remove(evaluation_csv_path)
         except OSError:
             logger.debug(f"Could not remove temporary file: {evaluation_csv_path}")
+        
+        # Log aggregated LLM operation metrics
+        llm_tracker = LLMOperationTracker()
+        llm_metrics = llm_tracker.to_mlflow_metrics()
+        if llm_metrics:
+            logger.info(f"Logging {len(llm_metrics)} LLM operation metrics to MLflow...")
+            mlflow_tracker.log_metrics(llm_metrics)
+            
+            # Log operation-level details in MLflow params for reference
+            llm_params = llm_tracker.to_mlflow_params()
+            if llm_params:
+                mlflow_tracker.log_params(llm_params)
 
     logger.info(f"Engine statistics: {engine.get_engine_stats()}")
 
