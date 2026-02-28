@@ -2,12 +2,16 @@
 
 import os
 import sys
+import csv
+import json
 import logging
 import argparse
 import subprocess
+import hashlib
+import tempfile
 from pathlib import Path
 
-from src.config import validate_config, load_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C, MODELS_PATH
+from src.config import validate_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C, MODELS_PATH
 from src.data_pipeline import DataPipeline
 from src.data_evaluator import DataEvaluator
 from src.recommendation_engine import (
@@ -15,8 +19,7 @@ from src.recommendation_engine import (
     NaiveBayesBundleRecommender,
     SVMBundleRecommender,
 )
-from src.mlflow_client import MLflowExperimentTracker
-from src.utils import setup_logging, format_recommendations
+from src.utils import setup_logging, format_recommendations, init_mlflow_tracking
 
 logger = logging.getLogger(__name__)
 
@@ -197,14 +200,79 @@ def train_recommenders(pipeline: DataPipeline, mlflow_tracker=None):
     # Log model artifact to MLflow
     if mlflow_tracker and mlflow_tracker.enabled:
         mlflow_tracker.log_artifact(model_file, "models")
-        
-        # Log dataset statistics
+
+        # Log dataset statistics and data lineage
+        unique_items = sorted({item for trans in transactions for item in trans})
+        dataset_preview = []
+        if pipeline.transactions is not None and "Items" in pipeline.transactions:
+            dataset_preview = pipeline.transactions["Items"].head(20).tolist()
+
+        transactions_digest = hashlib.sha256(
+            json.dumps(transactions, sort_keys=False).encode("utf-8")
+        ).hexdigest()
+
         dataset_stats = {
             "n_transactions": len(transactions),
             "n_bundles": len(bundles),
-            "n_unique_items": len(set(item for trans in transactions for item in trans)),
+            "n_unique_items": len(unique_items),
+            "feature_count": len(unique_items),
+            "dataset_hash_sha256": transactions_digest,
+            "preprocessing_steps": [
+                "convert_csv_to_tsv",
+                "load_raw_data",
+                "preprocess",
+                "create_transaction_baskets",
+                "generate_product_bundles",
+            ],
         }
         mlflow_tracker.log_dict(dataset_stats, "dataset_stats.json")
+
+        bundle_size_distribution = {}
+        for bundle in bundles:
+            size_key = str(len(bundle))
+            bundle_size_distribution[size_key] = bundle_size_distribution.get(size_key, 0) + 1
+
+        bundle_stats = {
+            "bundle_count": len(bundles),
+            "bundle_size_distribution": bundle_size_distribution,
+            "max_bundle_size": max((len(bundle) for bundle in bundles), default=0),
+            "min_bundle_size": min((len(bundle) for bundle in bundles), default=0),
+            "avg_bundle_size": (
+                sum(len(bundle) for bundle in bundles) / len(bundles)
+                if bundles
+                else 0.0
+            ),
+        }
+        mlflow_tracker.log_dict(bundle_stats, "bundle_stats.json")
+
+        mlflow_tracker.log_dict(
+            {
+                "sample_size": len(dataset_preview),
+                "items_preview": dataset_preview,
+            },
+            "dataset_snapshot.json",
+        )
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix="_evaluation.csv", delete=False, newline="") as tmp_csv:
+            writer = csv.writer(tmp_csv)
+            writer.writerow(["model", "accuracy", "precision", "recall", "f1", "roc_auc"])
+            for model_name, metric_dict in metrics.items():
+                writer.writerow(
+                    [
+                        model_name,
+                        metric_dict.get("accuracy", 0.0),
+                        metric_dict.get("precision", 0.0),
+                        metric_dict.get("recall", 0.0),
+                        metric_dict.get("f1", 0.0),
+                        metric_dict.get("roc_auc", 0.0),
+                    ]
+                )
+            evaluation_csv_path = tmp_csv.name
+        mlflow_tracker.log_artifact(evaluation_csv_path, "evaluation")
+        try:
+            os.remove(evaluation_csv_path)
+        except OSError:
+            logger.debug(f"Could not remove temporary file: {evaluation_csv_path}")
 
     logger.info(f"Engine statistics: {engine.get_engine_stats()}")
 
@@ -373,20 +441,13 @@ def main():
     # Validate configuration
     validate_config()
     
-    # Load configuration (including MLflow config)
-    _, _, _, _, _, mlflow_config = load_config()
-    
     # Initialize MLflow tracker if requested
     mlflow_tracker = None
+    mlflow_tracking_uri = "mlruns"
     if args.mlflow or args.mlflow_ui:
-        # Override config to enable MLflow
-        mlflow_config.enabled = True
-        mlflow_tracker = MLflowExperimentTracker(mlflow_config)
-        if mlflow_tracker.enabled:
-            logger.info(f"MLflow tracking enabled (experiment: {mlflow_config.experiment_name})")
-            logger.info(f"MLflow tracking URI: {mlflow_config.tracking_uri}")
-        else:
-            logger.warning("MLflow not available. Install with: pip install mlflow")
+        mlflow_tracker = init_mlflow_tracking(enabled_override=True)
+        if mlflow_tracker and mlflow_tracker.config is not None:
+            mlflow_tracking_uri = mlflow_tracker.config.tracking_uri
 
     # Execute pipeline
     if args.download or args.full:
@@ -426,7 +487,7 @@ def main():
             logger.info("Access the UI at: http://127.0.0.1:5000")
             logger.info("Press Ctrl+C to stop the UI server")
             try:
-                subprocess.run(["mlflow", "ui", "--backend-store-uri", mlflow_config.tracking_uri])
+                subprocess.run(["mlflow", "ui", "--backend-store-uri", mlflow_tracking_uri])
             except KeyboardInterrupt:
                 logger.info("MLflow UI stopped")
             except FileNotFoundError:
