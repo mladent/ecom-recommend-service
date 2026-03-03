@@ -24,7 +24,12 @@ def get_engine() -> BundleRecommendationEngine:
     """Lazy load and return the recommendation engine."""
     global _engine
     if _engine is None:
-        pipeline_config, engine_config, _, _, _, _ = load_config()
+        loaded_configs = load_config()
+        if len(loaded_configs) < 2:
+            raise RuntimeError("load_config() must return at least pipeline and engine configs")
+
+        pipeline_config = loaded_configs[0]
+        engine_config = loaded_configs[1]
         _engine = BundleRecommendationEngine(
             engine_config=engine_config,
             pipeline_config=pipeline_config,
