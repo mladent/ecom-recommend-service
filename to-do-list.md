@@ -1,6 +1,6 @@
 # Project To-Do List
 
-**Last Updated:** 20 February 2026  
+**Last Updated:** 3 March 2026  
 **Status:** Phase 1 Complete ✅ | Phase 2 In Progress 🚧  
 **Organized by:** Priority & Subsystem
 
@@ -949,14 +949,17 @@
 
 ### MLflow Integration - Foundation
 
-**Status Update (2026-02-28):**
+**Status Update (2026-03-03):**
 - ✅ Implemented: dependency/config wiring, MLflow tracker wrapper, training metric logging, CLI integration, `examples_mlflow.py`, and `tests/test_mlflow_integration.py`
 - ✅ Commits: `ee3cec9` (foundation), `26cb461` (mlflow typing fix), `578b96f` + `acb409d` (load_config tuple updates), `e9d0a8d` (SVC kernel typing fix), `b84f618` + `48dcc15` (metrics tags, safe ROC-AUC, artifacts/lineage logging, LLM operation tracking)
+- ✅ Commit: `3800459` (fixed `LLMOperationTracker` deadlock in MLflow metrics/params conversion)
+- ✅ Commit: `84a774c` (API `load_config()` tuple compatibility fix in `get_engine()`)
 - ✅ Completed P0 (MLflow Foundation): dependency/config wiring, tracker wrapper, metrics logging (accuracy/precision/recall/f1/roc_auc), training timing, artifact logging, data lineage, init_mlflow_tracking() helper
-- ✅ Verified: All 45 MLflow integration tests passing; SVM and Naive Bayes both train successfully with full metrics
+- ✅ Verified: All 45 MLflow integration tests passing in venv (`python -m pytest tests/test_mlflow_integration.py -q`)
+- ✅ Verified: Full suite passing in venv (`python -m pytest -q`) → **435 passed, 3 skipped, 2 warnings**
 - ✅ Test Coverage: MLflow config, tracker operations, training pipelines, LLM operation tracking, edge cases
 - ✅ Models Validated: Both NaiveBayesBundleRecommender and SVMBundleRecommender fully functional in MLflow workflows
-- ⏳ Next (P1): LLM aggregated metrics tracking (llm_total_calls, cache_hit_rate, latency, provider distribution, per-operation counters) - FOUNDATION IMPLEMENTED
+- ✅ Next (P1) foundation item addressed: LLM aggregated metrics tracking now validated and deadlock-free (`llm_total_calls`, cache hit rate, latency, provider distribution, per-operation counters)
 
 - [x] **MLflow Implementation Plan (Detailed)** (P0) ✅ COMPLETE
   - **Goal:** Track model quality, system performance, and LLM operations with MLflow (local `mlruns/` backend).
