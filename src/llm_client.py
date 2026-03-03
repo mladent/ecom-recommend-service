@@ -714,13 +714,20 @@ class LLMOperationTracker:
         """
         params = {}
         with self._operation_lock:
-            # Overall metrics
-            total_calls = self.get_total_calls()
+            # Overall metrics (computed inline to avoid nested lock acquisition)
+            total_calls = sum(stats.total_calls for stats in self._stats.values())
+            total_cache_hits = sum(stats.cache_hits for stats in self._stats.values())
+            cache_hit_rate = (total_cache_hits / total_calls) * 100.0 if total_calls > 0 else 0.0
+
             params["llm_total_calls"] = str(total_calls)
-            params["llm_cache_hit_rate_percent"] = f"{self.get_overall_cache_hit_rate():.2f}"
-            
+            params["llm_cache_hit_rate_percent"] = f"{cache_hit_rate:.2f}"
+
             # Provider distribution as comma-separated provider=count format
-            provider_dist = self.get_provider_distribution()
+            provider_dist: Dict[str, int] = {}
+            for stats in self._stats.values():
+                for provider, count in stats.provider_distribution.items():
+                    provider_dist[provider] = provider_dist.get(provider, 0) + count
+
             if provider_dist:
                 dist_str = ",".join(f"{p}={c}" for p, c in sorted(provider_dist.items()))
                 params["llm_provider_distribution"] = dist_str
@@ -743,9 +750,13 @@ class LLMOperationTracker:
         """
         metrics = {}
         with self._operation_lock:
-            # Overall metrics
-            metrics["llm_total_calls"] = float(self.get_total_calls())
-            metrics["llm_cache_hit_rate_percent"] = self.get_overall_cache_hit_rate()
+            # Overall metrics (computed inline to avoid nested lock acquisition)
+            total_calls = sum(stats.total_calls for stats in self._stats.values())
+            total_cache_hits = sum(stats.cache_hits for stats in self._stats.values())
+            cache_hit_rate = (total_cache_hits / total_calls) * 100.0 if total_calls > 0 else 0.0
+
+            metrics["llm_total_calls"] = float(total_calls)
+            metrics["llm_cache_hit_rate_percent"] = cache_hit_rate
             metrics["llm_total_latency_ms"] = sum(stats.total_latency_ms for stats in self._stats.values())
             metrics["llm_total_errors"] = sum(stats.error_count for stats in self._stats.values())
             
