@@ -33,7 +33,7 @@ class TestMLflowConfig:
         config = MLflowConfig()
         
         assert config.enabled is False
-        assert config.tracking_uri == "mlruns"
+        assert config.tracking_uri == "sqlite:///mlflow.db"
         assert config.experiment_name == "bundle-recommendation-engine"
         assert config.run_name_prefix == ""
         assert config.log_system_metrics is True
@@ -199,7 +199,7 @@ class TestMLflowInitializationHelper:
 
         tracker_instance = Mock()
         tracker_instance.enabled = True
-        tracker_instance.config = MLflowConfig(enabled=True, tracking_uri="mlruns", experiment_name="test")
+        tracker_instance.config = MLflowConfig(enabled=True, tracking_uri="sqlite:///mlflow.db", experiment_name="test")
         mock_tracker_class.return_value = tracker_instance
 
         tracker = init_mlflow_tracking(enabled_override=True)
