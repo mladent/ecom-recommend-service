@@ -112,7 +112,7 @@ out_of_stock_alternatives:
 # MLflow Tracking Configuration
 mlflow:
   enabled: false
-  tracking_uri: mlruns
+  tracking_uri: sqlite:///mlflow.db
   experiment_name: bundle-recommendation-engine
   run_name_prefix: ""
   log_system_metrics: true

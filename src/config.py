@@ -236,7 +236,7 @@ class MLflowConfig:
     """Configuration for MLflow experiment tracking."""
     
     enabled: bool = False
-    tracking_uri: str = "mlruns"
+    tracking_uri: str = "sqlite:///mlflow.db"
     experiment_name: str = "bundle-recommendation-engine"
     run_name_prefix: str = ""
     log_system_metrics: bool = True
@@ -374,7 +374,7 @@ def load_config() -> tuple[PipelineConfig, EngineConfig, APIConfig, LLMConfig, C
     mlflow_cfg = yaml_config.get("mlflow", {})
     mlflow = MLflowConfig(
         enabled=_env_bool("MLFLOW_ENABLED", mlflow_cfg.get("enabled", False)),
-        tracking_uri=os.getenv("MLFLOW_TRACKING_URI", mlflow_cfg.get("tracking_uri", "mlruns")),
+        tracking_uri=os.getenv("MLFLOW_TRACKING_URI", mlflow_cfg.get("tracking_uri", "sqlite:///mlflow.db")),
         experiment_name=os.getenv("MLFLOW_EXPERIMENT_NAME", mlflow_cfg.get("experiment_name", "bundle-recommendation-engine")),
         run_name_prefix=os.getenv("MLFLOW_RUN_NAME_PREFIX", mlflow_cfg.get("run_name_prefix", "")),
         log_system_metrics=_env_bool("MLFLOW_LOG_SYSTEM_METRICS", mlflow_cfg.get("log_system_metrics", True)),

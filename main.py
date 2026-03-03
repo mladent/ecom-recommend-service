@@ -456,7 +456,7 @@ def main():
     
     # Initialize MLflow tracker if requested
     mlflow_tracker = None
-    mlflow_tracking_uri = "mlruns"
+    mlflow_tracking_uri = "sqlite:///mlflow.db"
     if args.mlflow or args.mlflow_ui:
         mlflow_tracker = init_mlflow_tracking(enabled_override=True)
         if mlflow_tracker and mlflow_tracker.config is not None:
