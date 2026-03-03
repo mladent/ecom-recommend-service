@@ -2,8 +2,13 @@
 
 import os
 import sys
+import csv
+import json
 import logging
 import argparse
+import subprocess
+import hashlib
+import tempfile
 from pathlib import Path
 
 from src.config import validate_config, RAW_DATA_PATH, PROCESSED_DATA_PATH, SVM_KERNEL, SVM_C, MODELS_PATH
@@ -14,7 +19,8 @@ from src.recommendation_engine import (
     NaiveBayesBundleRecommender,
     SVMBundleRecommender,
 )
-from src.utils import setup_logging, format_recommendations
+from src.utils import setup_logging, format_recommendations, init_mlflow_tracking
+from src.llm_client import LLMOperationTracker
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +142,25 @@ def regenerate_bundles_only():
         return None
 
 
-def train_recommenders(pipeline: DataPipeline):
-    """Train recommendation engine."""
+def train_recommenders(pipeline: DataPipeline, mlflow_tracker=None):
+    """Train recommendation engine.
+    
+    Args:
+        pipeline: DataPipeline instance with processed data
+        mlflow_tracker: Optional MLflowExperimentTracker for experiment logging
+    """
     logger.info("Training recommendation engine...")
+
+    # Validate pipeline data
+    if pipeline.transactions is None:
+        logger.error("Pipeline has no transactions. Please run data preparation first.")
+        logger.info("Run: python main.py --prepare")
+        return None
+    
+    if pipeline.bundles is None:
+        logger.error("Pipeline has no bundles. Please run data preparation first.")
+        logger.info("Run: python main.py --prepare")
+        return None
 
     # Prepare data
     transactions = pipeline.transactions["Items"].tolist()
@@ -148,8 +170,8 @@ def train_recommenders(pipeline: DataPipeline):
         logger.error("No transactions or bundles available")
         return None
 
-    # Initialize engine
-    engine = BundleRecommendationEngine()
+    # Initialize engine with MLflow tracker
+    engine = BundleRecommendationEngine(mlflow_tracker=mlflow_tracker)
 
     # Add Naive Bayes recommender
     logger.info("Adding Naive Bayes recommender...")
@@ -175,6 +197,95 @@ def train_recommenders(pipeline: DataPipeline):
     logger.info("Saving trained model...")
     model_file = os.path.join(MODELS_PATH, "recommendation_engine.pkl")
     engine.save_model(model_file)
+    
+    # Log model artifact to MLflow
+    if mlflow_tracker and mlflow_tracker.enabled:
+        mlflow_tracker.log_artifact(model_file, "models")
+
+        # Log dataset statistics and data lineage
+        unique_items = sorted({item for trans in transactions for item in trans})
+        dataset_preview = []
+        if pipeline.transactions is not None and "Items" in pipeline.transactions:
+            dataset_preview = pipeline.transactions["Items"].head(20).tolist()
+
+        transactions_digest = hashlib.sha256(
+            json.dumps(transactions, sort_keys=False).encode("utf-8")
+        ).hexdigest()
+
+        dataset_stats = {
+            "n_transactions": len(transactions),
+            "n_bundles": len(bundles),
+            "n_unique_items": len(unique_items),
+            "feature_count": len(unique_items),
+            "dataset_hash_sha256": transactions_digest,
+            "preprocessing_steps": [
+                "convert_csv_to_tsv",
+                "load_raw_data",
+                "preprocess",
+                "create_transaction_baskets",
+                "generate_product_bundles",
+            ],
+        }
+        mlflow_tracker.log_dict(dataset_stats, "dataset_stats.json")
+
+        bundle_size_distribution = {}
+        for bundle in bundles:
+            size_key = str(len(bundle))
+            bundle_size_distribution[size_key] = bundle_size_distribution.get(size_key, 0) + 1
+
+        bundle_stats = {
+            "bundle_count": len(bundles),
+            "bundle_size_distribution": bundle_size_distribution,
+            "max_bundle_size": max((len(bundle) for bundle in bundles), default=0),
+            "min_bundle_size": min((len(bundle) for bundle in bundles), default=0),
+            "avg_bundle_size": (
+                sum(len(bundle) for bundle in bundles) / len(bundles)
+                if bundles
+                else 0.0
+            ),
+        }
+        mlflow_tracker.log_dict(bundle_stats, "bundle_stats.json")
+
+        mlflow_tracker.log_dict(
+            {
+                "sample_size": len(dataset_preview),
+                "items_preview": dataset_preview,
+            },
+            "dataset_snapshot.json",
+        )
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix="_evaluation.csv", delete=False, newline="") as tmp_csv:
+            writer = csv.writer(tmp_csv)
+            writer.writerow(["model", "accuracy", "precision", "recall", "f1", "roc_auc"])
+            for model_name, metric_dict in metrics.items():
+                writer.writerow(
+                    [
+                        model_name,
+                        metric_dict.get("accuracy", 0.0),
+                        metric_dict.get("precision", 0.0),
+                        metric_dict.get("recall", 0.0),
+                        metric_dict.get("f1", 0.0),
+                        metric_dict.get("roc_auc", 0.0),
+                    ]
+                )
+            evaluation_csv_path = tmp_csv.name
+        mlflow_tracker.log_artifact(evaluation_csv_path, "evaluation")
+        try:
+            os.remove(evaluation_csv_path)
+        except OSError:
+            logger.debug(f"Could not remove temporary file: {evaluation_csv_path}")
+        
+        # Log aggregated LLM operation metrics
+        llm_tracker = LLMOperationTracker()
+        llm_metrics = llm_tracker.to_mlflow_metrics()
+        if llm_metrics:
+            logger.info(f"Logging {len(llm_metrics)} LLM operation metrics to MLflow...")
+            mlflow_tracker.log_metrics(llm_metrics)
+            
+            # Log operation-level details in MLflow params for reference
+            llm_params = llm_tracker.to_mlflow_params()
+            if llm_params:
+                mlflow_tracker.log_params(llm_params)
 
     logger.info(f"Engine statistics: {engine.get_engine_stats()}")
 
@@ -320,6 +431,16 @@ def main():
         action="store_true",
         help="Launch REST API server for bundle recommendations",
     )
+    parser.add_argument(
+        "--mlflow",
+        action="store_true",
+        help="Enable MLflow experiment tracking for training runs",
+    )
+    parser.add_argument(
+        "--mlflow-ui",
+        action="store_true",
+        help="Launch MLflow UI after training (implies --mlflow)",
+    )
 
     args = parser.parse_args()
 
@@ -332,6 +453,14 @@ def main():
 
     # Validate configuration
     validate_config()
+    
+    # Initialize MLflow tracker if requested
+    mlflow_tracker = None
+    mlflow_tracking_uri = "mlruns"
+    if args.mlflow or args.mlflow_ui:
+        mlflow_tracker = init_mlflow_tracking(enabled_override=True)
+        if mlflow_tracker and mlflow_tracker.config is not None:
+            mlflow_tracking_uri = mlflow_tracker.config.tracking_uri
 
     # Execute pipeline
     if args.download or args.full:
@@ -352,9 +481,30 @@ def main():
         pipeline = prepare_data()  # Ensure data is prepared
         if not pipeline:
             return 1
-        engine = train_recommenders(pipeline)
+        
+        # Wrap training in MLflow run if enabled
+        if mlflow_tracker and mlflow_tracker.enabled:
+            with mlflow_tracker.start_run(run_name="training_run"):
+                mlflow_tracker.set_tag("pipeline_stage", "training")
+                mlflow_tracker.set_tag("model_type", "bundle_recommendation")
+                engine = train_recommenders(pipeline, mlflow_tracker=mlflow_tracker)
+        else:
+            engine = train_recommenders(pipeline)
+        
         if not engine:
             return 1
+        
+        # Launch MLflow UI if requested
+        if args.mlflow_ui:
+            logger.info("Launching MLflow UI...")
+            logger.info("Access the UI at: http://127.0.0.1:5000")
+            logger.info("Press Ctrl+C to stop the UI server")
+            try:
+                subprocess.run(["mlflow", "ui", "--backend-store-uri", mlflow_tracking_uri])
+            except KeyboardInterrupt:
+                logger.info("MLflow UI stopped")
+            except FileNotFoundError:
+                logger.error("MLflow CLI not found. Ensure mlflow is installed: pip install mlflow")
 
     if args.demo or args.full:
         # Load trained engine

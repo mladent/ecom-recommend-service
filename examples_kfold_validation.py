@@ -18,6 +18,7 @@ Usage:
 
 import logging
 import sys
+from src.config import load_config
 from src.recommendation_engine import (
     BundleRecommendationEngine,
     NaiveBayesBundleRecommender,
@@ -154,9 +155,11 @@ def main():
     if quick_mode:
         logger.info("Quick demo mode: Using 0.5% of data for fastest execution")
 
+    pipeline_config, engine_config, _, _, _, _ = load_config()
+
     # Load processed data
     logger.info("\nLoading processed data...")
-    pipeline = DataPipeline()
+    pipeline = DataPipeline(config=pipeline_config)
     pipeline.load_raw_data()
     pipeline.preprocess()
     transactions = pipeline.create_transaction_baskets()
@@ -172,18 +175,32 @@ def main():
         sample_size = max(25, len(transactions) // 200)  # Use 0.5% or minimum 25
         sampled_indices = random.sample(range(len(transactions)), min(sample_size, len(transactions)))
         transactions = transactions.iloc[sampled_indices].reset_index(drop=True)
+        # Update pipeline's internal transactions so bundle generation uses the sample
+        pipeline.transactions = transactions
         logger.info(f"Sampled {len(transactions)} transactions for quick demo")
 
     # Now generate bundles on sampled data (much faster)
     bundles = pipeline.generate_product_bundles() if not quick_mode else pipeline.generate_product_bundles(max_size=2)
 
     if bundles is None:
-        logger.error("Failed to generate bundles")
+        logger.error("Failed to generate bundles. Consider lowering MIN_SUPPORT and MIN_CONFIDENCE in .env file.")
         return
 
     # Convert to required format
     transaction_items = [list(items) for items in transactions["Items"].values]
     bundle_list = [tuple(b) for b in bundles]
+
+    if not bundle_list:
+        error_msg = (
+            f"No bundles found (sampled {len(transaction_items)} transactions). "
+            "To generate bundles with smaller datasets:\n"
+            "  1. Edit .env file\n"
+            "  2. Lower MIN_SUPPORT (try 0.000298) and MIN_CONFIDENCE (try 0.07)\n"
+            "  3. See .env-template comments for recommended values\n"
+            "  4. Run again without --quick flag for full dataset, or adjust --quick sampling"
+        )
+        logger.error(error_msg)
+        return
 
     logger.info(f"Loaded {len(transaction_items)} transactions and {len(bundle_list)} bundles")
 
@@ -194,11 +211,26 @@ def main():
     logger.info("EXAMPLE 1: Single Random Split (80/20)")
     logger.info("=" * 80)
 
-    engine1 = BundleRecommendationEngine()
+    engine1 = BundleRecommendationEngine(
+        engine_config=engine_config,
+        pipeline_config=pipeline_config,
+    )
     if models_config["naive_bayes"]:
-        engine1.add_recommender("naive_bayes", NaiveBayesBundleRecommender())
+        engine1.add_recommender(
+            "naive_bayes",
+            NaiveBayesBundleRecommender(
+                config=engine_config,
+                default_validation_split=pipeline_config.train_test_split,
+            ),
+        )
     if models_config["svm"]:
-        engine1.add_recommender("svm", SVMBundleRecommender())
+        engine1.add_recommender(
+            "svm",
+            SVMBundleRecommender(
+                config=engine_config,
+                default_validation_split=pipeline_config.train_test_split,
+            ),
+        )
 
     logger.info("\nTraining with single random split...")
     metrics1 = engine1.fit_all_with_random_split(transaction_items, bundle_list, test_size=0.2)
@@ -224,11 +256,26 @@ def main():
     logger.info("EXAMPLE 2: 10-Fold Cross-Validation")
     logger.info("=" * 80)
 
-    engine2 = BundleRecommendationEngine()
+    engine2 = BundleRecommendationEngine(
+        engine_config=engine_config,
+        pipeline_config=pipeline_config,
+    )
     if models_config["naive_bayes"]:
-        engine2.add_recommender("naive_bayes", NaiveBayesBundleRecommender())
+        engine2.add_recommender(
+            "naive_bayes",
+            NaiveBayesBundleRecommender(
+                config=engine_config,
+                default_validation_split=pipeline_config.train_test_split,
+            ),
+        )
     if models_config["svm"]:
-        engine2.add_recommender("svm", SVMBundleRecommender())
+        engine2.add_recommender(
+            "svm",
+            SVMBundleRecommender(
+                config=engine_config,
+                default_validation_split=pipeline_config.train_test_split,
+            ),
+        )
 
     logger.info("\nTraining with 10-fold cross-validation...")
     metrics2 = engine2.fit_all_with_kfold(transaction_items, bundle_list, n_splits=10)

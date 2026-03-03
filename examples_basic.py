@@ -7,6 +7,7 @@ and get bundle recommendations for customer transactions.
 
 import logging
 import os
+from src.config import load_config
 from src.recommendation_engine import BundleRecommendationEngine
 from src.utils import setup_logging, format_recommendations
 
@@ -28,7 +29,11 @@ def example_basic_recommendations():
         logger.info("Please train the model first using: python main.py --train")
         return
 
-    engine = BundleRecommendationEngine()
+    pipeline_config, engine_config, _, _, _, _ = load_config()
+    engine = BundleRecommendationEngine(
+        engine_config=engine_config,
+        pipeline_config=pipeline_config,
+    )
     if not engine.load_model(models_path):
         logger.error("Failed to load model")
         return

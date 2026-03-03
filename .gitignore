@@ -18,6 +18,8 @@ data/anomaly_cache.json
 data/context_extraction_cache.json
 data/out_of_stock_alternatives_cache.json
 !data/.gitkeep
+!data/data_full.csv
+!data/data_minimum.csv
 
 # Python
 __pycache__/

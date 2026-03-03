@@ -3,10 +3,11 @@
 import json
 import logging
 import os
-from typing import Dict, Any, List, Optional, Tuple
-from flask import Flask, jsonify, request, send_from_directory, send_file
+from typing import Dict, Any, List, Optional, Tuple, Union
+from flask import Flask, jsonify, request, send_from_directory, send_file, Response
 from flask_cors import CORS
 
+from src.config import load_config
 from src.recommendation_engine import BundleRecommendationEngine
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,16 @@ def get_engine() -> BundleRecommendationEngine:
     """Lazy load and return the recommendation engine."""
     global _engine
     if _engine is None:
-        _engine = BundleRecommendationEngine()
+        loaded_configs = load_config()
+        if len(loaded_configs) < 2:
+            raise RuntimeError("load_config() must return at least pipeline and engine configs")
+
+        pipeline_config = loaded_configs[0]
+        engine_config = loaded_configs[1]
+        _engine = BundleRecommendationEngine(
+            engine_config=engine_config,
+            pipeline_config=pipeline_config,
+        )
         if not _engine.load_model("models/recommendation_engine.pkl"):
             logger.warning("Failed to load recommendation engine model")
             raise RuntimeError("Recommendation engine model not found. Train the model first.")
@@ -31,13 +41,13 @@ def get_engine() -> BundleRecommendationEngine:
 
 
 @app.route("/health", methods=["GET"])
-def health() -> Tuple[Dict[str, str], int]:
+def health() -> tuple[Response, int]:
     """Health check endpoint."""
     return jsonify({"status": "ok"}), 200
 
 
 @app.route("/api/v1/recommenders", methods=["GET"])
-def get_recommenders() -> Tuple[Dict[str, Any], int]:
+def get_recommenders() -> tuple[Response, int]:
     """
     Get list of available recommenders and their metadata.
     
@@ -80,7 +90,7 @@ def get_recommenders() -> Tuple[Dict[str, Any], int]:
 
 
 @app.route("/api/v1/bundles", methods=["GET"])
-def get_bundles_for_product() -> Tuple[Dict[str, Any], int]:
+def get_bundles_for_product() -> tuple[Response, int]:
     """
     Get bundle recommendations for a product from all available models.
     
@@ -176,7 +186,7 @@ def get_bundles_for_product() -> Tuple[Dict[str, Any], int]:
 
 
 @app.route("/api/v1/bundles/batch", methods=["POST"])
-def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
+def get_bundles_batch() -> tuple[Response, int]:
     """
     Get bundle recommendations for multiple products from all available models.
     
@@ -296,7 +306,7 @@ def get_bundles_batch() -> Tuple[Dict[str, Any], int]:
 
 
 @app.route("/api/v1/cross-sell", methods=["GET"])
-def get_cross_sell() -> Tuple[Dict[str, Any], int]:
+def get_cross_sell() -> tuple[Response, int]:
     """
     Get cross-sell product suggestions for a product from all available models.
     
@@ -378,7 +388,7 @@ def get_cross_sell() -> Tuple[Dict[str, Any], int]:
 
 
 @app.route("/api/v1/stats", methods=["GET"])
-def get_stats() -> Tuple[Dict[str, Any], int]:
+def get_stats() -> tuple[Response, int]:
     """
     Get engine statistics including bundle count and recommender info.
     
@@ -394,7 +404,7 @@ def get_stats() -> Tuple[Dict[str, Any], int]:
     """
     try:
         engine = get_engine()
-        stats = engine.get_stats()
+        stats = engine.get_engine_stats()
         
         # Augment stats with recommender names
         stats["recommenders"] = list(engine.recommenders.keys())
@@ -440,31 +450,27 @@ def serve_static(filename):
 
 
 @app.errorhandler(404)
-def not_found(error) -> Tuple[Dict[str, str], int]:
+def not_found(error) -> tuple[Response, int]:
     """Handle 404 errors."""
     return jsonify({"status": "error", "message": "Endpoint not found"}), 404
 
 
 
 @app.errorhandler(500)
-def internal_error(error) -> Tuple[Dict[str, str], int]:
+def internal_error(error) -> tuple[Response, int]:
     """Handle 500 errors."""
     return jsonify({"status": "error", "message": "Internal server error"}), 500
 
 
 if __name__ == "__main__":
     import sys
-    from src.config import Config
     
-    config = Config()
+    # Default configuration
     log_level = logging.INFO
-    if config.verbose:
-        log_level = logging.DEBUG
+    port = 5000
+    debug = False
     
     logging.basicConfig(level=log_level)
-    
-    port = getattr(config, "api_port", 5000)
-    debug = getattr(config, "verbose", False)
     
     logger.info(f"Starting API server on 0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port, debug=debug)
