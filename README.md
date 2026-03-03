@@ -16,6 +16,7 @@ A machine learning service that recommends product bundles to e-commerce custome
 - **Cross-sell Recommendations**: Intelligent product suggestions based on purchase patterns
 - **Model Persistence**: Save and load trained models for production deployment
 - **REST API**: Flask-based web service with JSON endpoints
+- **Experiment Tracking**: Optional MLflow tracking for metrics, params, and artifacts
 - **LLM Integration**: Category enrichment and description normalization capabilities
 - **Docker Support**: Full containerization for easy deployment
 - **Comprehensive Testing**: Unit tests with pytest covering all major components
@@ -78,6 +79,7 @@ print(f"Confidence: {recs['confidence']:.2%}")
 | [examples_crosssell.py](examples_crosssell.py) | Cross-sell product suggestions | `python examples_crosssell.py` |
 | [examples_comparison.py](examples_comparison.py) | Compare Naive Bayes vs SVM vs Ensemble | `python examples_comparison.py` |
 | [examples_kfold_validation.py](examples_kfold_validation.py) | K-fold cross-validation for robust metrics | `python examples_kfold_validation.py` |
+| [examples_mlflow.py](examples_mlflow.py) | MLflow experiment tracking examples and UI launch | `python examples_mlflow.py --training --mlflow-ui` |
 | [examples_category_enrichment.py](examples_category_enrichment.py) | LLM-powered category enrichment | `python examples_category_enrichment.py` |
 | [examples_batch_enrichment.py](examples_batch_enrichment.py) | Batch processing for optimized LLM enrichment | `python examples_batch_enrichment.py` |
 
@@ -185,6 +187,14 @@ open http://localhost:8000
 
 Run `pytest tests/ -v` for comprehensive test suite covering data pipeline, recommendation engine, API endpoints, and integration tests. All LLM functions are mocked for speed and consistency. See [TESTING_GUIDE.md](TESTING_GUIDE.md) for detailed testing documentation, mocking strategy, and available commands.
 
+## 📈 MLflow
+
+Enable experiment tracking during training with `python main.py --train --mlflow`.
+
+Launch the MLflow UI after training with `python main.py --train --mlflow-ui`, then open `http://127.0.0.1:5000`.
+
+You can also run dedicated examples with `python examples_mlflow.py --training` (or `--all`) and launch UI via `--mlflow-ui`.
+
 ## ⚙️ Configuration
 
 Edit `.env` to configure bundle generation parameters (MIN_SUPPORT, MIN_CONFIDENCE, MAX_BUNDLE_SIZE), training settings (TRAIN_TEST_SPLIT, RANDOM_STATE), and resource allocation (N_JOBS). Use `python main.py --bundles-only` to quickly test different parameters without full reprocessing.
@@ -198,6 +208,7 @@ For complete configuration reference, defaults, and LLM settings, see [QUICK_REF
 | **Getting started** | This README + [examples_basic.py](examples_basic.py) | Installation, quick run, simple example |
 | **Commands & API** | [QUICK_REF.md](QUICK_REF.md) | All CLI commands, Python API, configuration options |
 | **System design** | [ARCHITECTURE.md](ARCHITECTURE.md) | Algorithms, data splitting, performance metrics |
+| **MLflow tracking** | [examples_mlflow.py](examples_mlflow.py) | Training runs, tuning sweeps, and UI launch |
 | **Web API & UI** | [QUICK_REF.md](QUICK_REF.md), run `python main.py --api` | REST endpoints, example requests |
 | **Testing** | [TESTING_GUIDE.md](TESTING_GUIDE.md) | Test organization, mocking strategy, CI/CD |
 | **Docker deployment** | [DOCKER_README.md](DOCKER_README.md) | Build, run, and orchestrate containers |
