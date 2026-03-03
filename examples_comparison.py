@@ -30,7 +30,7 @@ def example_model_comparison():
         logger.info("Please train the model first using: python main.py --train")
         return
 
-    pipeline_config, engine_config, _, _, _ = load_config()
+    pipeline_config, engine_config, _, _, _, _ = load_config()
     engine = BundleRecommendationEngine(
         engine_config=engine_config,
         pipeline_config=pipeline_config,

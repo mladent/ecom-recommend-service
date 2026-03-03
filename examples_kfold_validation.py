@@ -155,7 +155,7 @@ def main():
     if quick_mode:
         logger.info("Quick demo mode: Using 0.5% of data for fastest execution")
 
-    pipeline_config, engine_config, _, _, _ = load_config()
+    pipeline_config, engine_config, _, _, _, _ = load_config()
 
     # Load processed data
     logger.info("\nLoading processed data...")

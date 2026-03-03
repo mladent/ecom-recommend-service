@@ -49,7 +49,7 @@ def main():
     print()
     
     # Initialize pipeline with explicit config object
-    pipeline_config, _, _, _, _ = load_config()
+    pipeline_config, _, _, _, _, _ = load_config()
     pipeline = DataPipeline(config=pipeline_config)
     pipeline.raw_data = sample_data
     

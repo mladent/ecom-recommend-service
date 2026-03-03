@@ -18,7 +18,7 @@ Usage:
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, Type
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -549,3 +549,223 @@ class LLMClient:
             f"LLMClient(provider={self.config.provider}, "
             f"model={self.config.model})"
         )
+
+
+# ============================================================================
+# LLM Operation Tracking - Aggregates metrics for MLflow logging
+# ============================================================================
+
+from threading import Lock
+import time
+
+
+@dataclass
+class LLMOperationStats:
+    """Statistics for a single LLM operation type."""
+    
+    operation_name: str  # e.g., 'enrich_categories', 'select_alternatives'
+    total_calls: int = 0
+    cache_hits: int = 0
+    total_latency_ms: float = 0.0
+    error_count: int = 0
+    provider_distribution: Dict[str, int] = field(default_factory=dict)
+    
+    def add_call(self, latency_ms: float, cached: bool = False, provider: str = "unknown", error: bool = False) -> None:
+        """Record a single LLM operation call."""
+        self.total_calls += 1
+        self.total_latency_ms += latency_ms
+        if cached:
+            self.cache_hits += 1
+        if error:
+            self.error_count += 1
+        self.provider_distribution[provider] = self.provider_distribution.get(provider, 0) + 1
+    
+    @property
+    def cache_hit_rate(self) -> float:
+        """Calculate cache hit rate as percentage."""
+        if self.total_calls == 0:
+            return 0.0
+        return (self.cache_hits / self.total_calls) * 100.0
+    
+    @property
+    def avg_latency_ms(self) -> float:
+        """Calculate average latency in milliseconds."""
+        if self.total_calls == 0:
+            return 0.0
+        return self.total_latency_ms / self.total_calls
+
+
+class LLMOperationTracker:
+    """Thread-safe tracker for LLM operation metrics.
+    
+    Aggregates metrics across all LLM operations (enrich_categories, extract_contexts,
+    batch_score_anomalies, select_alternatives) for logging to MLflow.
+    
+    Usage:
+        tracker = LLMOperationTracker()
+        tracker.record_operation("enrich_categories", latency_ms=150, cached=True, provider="openai")
+        tracker.record_operation("select_alternatives", latency_ms=200, cached=False, provider="gemini")
+        stats = tracker.get_aggregated_stats()  # Dict[str, LLMOperationStats]
+    """
+    
+    _instance: Optional['LLMOperationTracker'] = None
+    _lock: Lock = Lock()
+    
+    def __new__(cls) -> 'LLMOperationTracker':
+        """Implement singleton pattern."""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self) -> None:
+        """Initialize the tracker (singleton)."""
+        if not self._initialized:
+            self._stats: Dict[str, LLMOperationStats] = {}
+            self._operation_lock = Lock()
+            self._initialized = True
+    
+    def record_operation(
+        self,
+        operation_name: str,
+        latency_ms: float,
+        cached: bool = False,
+        provider: str = "unknown",
+        error: bool = False
+    ) -> None:
+        """Record a single LLM operation call.
+        
+        Args:
+            operation_name: Name of operation (e.g., 'enrich_categories')
+            latency_ms: Latency in milliseconds
+            cached: Whether result was from cache
+            provider: LLM provider name
+            error: Whether the operation failed
+        """
+        with self._operation_lock:
+            if operation_name not in self._stats:
+                self._stats[operation_name] = LLMOperationStats(operation_name=operation_name)
+            self._stats[operation_name].add_call(latency_ms, cached, provider, error)
+    
+    def get_aggregated_stats(self) -> Dict[str, LLMOperationStats]:
+        """Get all aggregated statistics.
+        
+        Returns:
+            Dictionary mapping operation names to their LLMOperationStats
+        """
+        with self._operation_lock:
+            return {k: v for k, v in self._stats.items()}
+    
+    def get_operation_stats(self, operation_name: str) -> Optional[LLMOperationStats]:
+        """Get statistics for a specific operation.
+        
+        Args:
+            operation_name: Name of operation to retrieve
+            
+        Returns:
+            LLMOperationStats if operation was tracked, None otherwise
+        """
+        with self._operation_lock:
+            return self._stats.get(operation_name)
+    
+    def get_total_calls(self) -> int:
+        """Get total number of all LLM calls across all operations."""
+        with self._operation_lock:
+            return sum(stats.total_calls for stats in self._stats.values())
+    
+    def get_total_cache_hits(self) -> int:
+        """Get total number of cache hits across all operations."""
+        with self._operation_lock:
+            return sum(stats.cache_hits for stats in self._stats.values())
+    
+    def get_overall_cache_hit_rate(self) -> float:
+        """Get overall cache hit rate as percentage."""
+        total_calls = self.get_total_calls()
+        if total_calls == 0:
+            return 0.0
+        total_hits = self.get_total_cache_hits()
+        return (total_hits / total_calls) * 100.0
+    
+    def get_provider_distribution(self) -> Dict[str, int]:
+        """Get distribution of calls across providers.
+        
+        Returns:
+            Dictionary mapping provider names to call counts
+        """
+        with self._operation_lock:
+            distribution: Dict[str, int] = {}
+            for stats in self._stats.values():
+                for provider, count in stats.provider_distribution.items():
+                    distribution[provider] = distribution.get(provider, 0) + count
+            return distribution
+    
+    def reset(self) -> None:
+        """Reset all tracked statistics."""
+        with self._operation_lock:
+            self._stats.clear()
+    
+    def to_mlflow_params(self) -> Dict[str, Any]:
+        """Convert tracked stats to MLflow parameter dictionary.
+        
+        Returns:
+            Dictionary of metrics suitable for MLflow.set_params() and log_metric()
+        """
+        params = {}
+        with self._operation_lock:
+            # Overall metrics (computed inline to avoid nested lock acquisition)
+            total_calls = sum(stats.total_calls for stats in self._stats.values())
+            total_cache_hits = sum(stats.cache_hits for stats in self._stats.values())
+            cache_hit_rate = (total_cache_hits / total_calls) * 100.0 if total_calls > 0 else 0.0
+
+            params["llm_total_calls"] = str(total_calls)
+            params["llm_cache_hit_rate_percent"] = f"{cache_hit_rate:.2f}"
+
+            # Provider distribution as comma-separated provider=count format
+            provider_dist: Dict[str, int] = {}
+            for stats in self._stats.values():
+                for provider, count in stats.provider_distribution.items():
+                    provider_dist[provider] = provider_dist.get(provider, 0) + count
+
+            if provider_dist:
+                dist_str = ",".join(f"{p}={c}" for p, c in sorted(provider_dist.items()))
+                params["llm_provider_distribution"] = dist_str
+            
+            # Per-operation metrics
+            for operation_name, stats in self._stats.items():
+                prefix = f"llm_{operation_name}"
+                params[f"{prefix}_calls"] = str(stats.total_calls)
+                params[f"{prefix}_cache_hit_rate_percent"] = f"{stats.cache_hit_rate:.2f}"
+                params[f"{prefix}_avg_latency_ms"] = f"{stats.avg_latency_ms:.2f}"
+                params[f"{prefix}_error_count"] = str(stats.error_count)
+        
+        return params
+    
+    def to_mlflow_metrics(self) -> Dict[str, float]:
+        """Convert tracked stats to MLflow metrics dictionary.
+        
+        Returns:
+            Dictionary of numeric metrics suitable for MLflow.log_metrics()
+        """
+        metrics = {}
+        with self._operation_lock:
+            # Overall metrics (computed inline to avoid nested lock acquisition)
+            total_calls = sum(stats.total_calls for stats in self._stats.values())
+            total_cache_hits = sum(stats.cache_hits for stats in self._stats.values())
+            cache_hit_rate = (total_cache_hits / total_calls) * 100.0 if total_calls > 0 else 0.0
+
+            metrics["llm_total_calls"] = float(total_calls)
+            metrics["llm_cache_hit_rate_percent"] = cache_hit_rate
+            metrics["llm_total_latency_ms"] = sum(stats.total_latency_ms for stats in self._stats.values())
+            metrics["llm_total_errors"] = sum(stats.error_count for stats in self._stats.values())
+            
+            # Per-operation metrics
+            for operation_name, stats in self._stats.items():
+                prefix = f"llm_{operation_name}"
+                metrics[f"{prefix}_calls"] = float(stats.total_calls)
+                metrics[f"{prefix}_cache_hit_rate_percent"] = stats.cache_hit_rate
+                metrics[f"{prefix}_avg_latency_ms"] = stats.avg_latency_ms
+                metrics[f"{prefix}_error_count"] = float(stats.error_count)
+        
+        return metrics

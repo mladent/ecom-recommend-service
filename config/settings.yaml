@@ -108,3 +108,11 @@ out_of_stock_alternatives:
   inventory_path: data/inventory.csv
   max_alternatives: 1
   min_score: 0.3
+
+# MLflow Tracking Configuration
+mlflow:
+  enabled: false
+  tracking_uri: mlruns
+  experiment_name: bundle-recommendation-engine
+  run_name_prefix: ""
+  log_system_metrics: true

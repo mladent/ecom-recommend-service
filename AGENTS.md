@@ -2,7 +2,11 @@
 
 ## Overview
 
-Guidelines for AI agents working on software development tasks, focusing on non-obvious patterns, agent-specific workflows, and integration best practices.
+Guidelines for AI agents working on software development tasks.
+Focusing exclusibvely on non-obvious patterns, agent-specific workflows, and integration best practices.
+
+Based on research from ["On the Impact of AGENTS.md Files on the Efficiency of AI Coding Agents"](https://arxiv.org/html/2601.20404v1), this guide documents patterns that significantly improve AI agent productivity in software development workflows.
+
 
 ---
 
@@ -42,20 +46,6 @@ Guidelines for AI agents working on software development tasks, focusing on non-
 - **Compose Functions**: Chain transformations with `.pipe()` or function composition
 - **Helper Functions**: Extract complex conditionals
 
-```python
-# Before: 100+ line function
-def process_order(order: dict) -> dict:
-    # Validation, pricing, inventory, order creation all in one
-    ...
-
-# After: Orchestration + focused functions
-def process_order(order: dict) -> dict:
-    validate_order(order)
-    total = calculate_order_total(order)
-    check_inventory_availability(order["items"])
-    return create_order_record(order, total)
-```
-
 **Acceptable Exceptions:**
 - Well-documented complex algorithms (single cohesive algorithm)
 - Configuration/setup functions (many options, single logical operation)
@@ -77,7 +67,7 @@ def process_order(order: dict) -> dict:
 **Avoid Creating New .md Files**
 - **DO NOT** create new markdown documentation files unless explicitly requested
 - Documentation belongs in code: docstrings, comments, and README.md
-- Exception: Project already has established documentation structure (ARCHITECTURE.md, API.md, etc.)
+- Exception: Project already has established documentation structure
 
 **Where to Document:**
 ```
@@ -147,7 +137,7 @@ Step 2: Core functionality
 Step 3: Enhancement
   ├─ Add error handling
   ├─ Optimize performance
-  └─ Add comprehensive tests
+  └─ Add unit/comprehensive tests
 ```
 
 ### 4.3 Verification Checklist
@@ -195,13 +185,6 @@ source venv/bin/activate  # Linux/Mac
 venv\Scripts\activate  # Windows
 ```
 
-**Why This Matters for AI Agents:**
-- Import validation reflects actual project dependencies
-- Test execution uses correct package versions
-- Prevents false positives/negatives from system Python packages
-- Commands like `pytest` and `python` use project-specific versions
-- Ensures `get_python_environment_details` returns accurate information
-
 **Workflow Integration:**
 ```
 Before running any Python commands:
@@ -226,7 +209,6 @@ Use dataclasses for structured returns instead of dicts - provides type safety a
 ### 5.3 Configuration Injection
 
 Avoid global configuration. Pass config objects explicitly as function parameters for testability and clarity.
-```
 
 ---
 
@@ -334,11 +316,13 @@ tests/         # Test suite
 
 **Best Practices:**
 - Use descriptive, imperative mood ("Add feature" not "Added feature")
+- Commit code and documentation files in separate commits
 - Keep subject under 72 characters
 - Explain what and why, not how
 - Reference issue numbers (e.g., "Fixes #123")
 - **NO emoticons or emojis**
 - NO vague messages ("fix stuff", "updates", "wip")
+- Only when making documentation-only commits, the `--no-verify` flag may be used: `git commit --no-verify -m "docs: <message>"`
 
 **Branch Naming:**
 - `feature/<description>`, `fix/<description>`, `test/<description>`, `docs/<description>`, `refactor/<description>`
