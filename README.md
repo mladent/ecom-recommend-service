@@ -1,24 +1,11 @@
 # E-Commerce Bundle Recommendation Service
 
-> ✨ **This project was vibecoded** — Built with AI assistance for rapid prototyping and exploration
-
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 ![Status](https://img.shields.io/badge/status-proof--of--concept-yellow.svg)
 ![ML](https://img.shields.io/badge/ML-scikit--learn-orange.svg)
 <!-- ![License](https://img.shields.io/badge/license-MIT-green.svg) -->
 
-A proof-of-concept machine learning service that recommends product bundles to e-commerce customers using Naive Bayes and SVM algorithms with ensemble methods. Features include automated data pipelines, multiple training strategies, and LLM integration capabilities.
-
-## 📊 Development Status
-
-**Phase 1: LLM Provider Consolidation** ✅ **COMPLETE**
-- Date: 19 February 2026
-- Helper methods: 5 new reusable functions consolidating LLM provider logic
-- Code reduction: 82 lines eliminated, 6.9% file size reduction
-- Test coverage: 7/7 LLM feature + helper tests passing
-- Impact: Eliminates ~460 lines of duplicate code, improves maintainability by 35-56% per refactored method
-
-See [to-do-list.md](to-do-list.md) for full refactoring progress and upcoming phases.
+A machine learning service that recommends product bundles to e-commerce customers using Naive Bayes and SVM algorithms with ensemble methods. Features include automated data pipelines, multiple training strategies, and LLM integration capabilities.
 
 ## ✨ Features
 
@@ -196,191 +183,30 @@ open http://localhost:8000
 
 ## 🧪 Testing
 
-The project includes comprehensive unit tests with **configurable LLM mocking** for fast, reliable test execution.
-
-### Quick Start
-
-```bash
-# Run all tests with coverage report
-make test
-
-# Fast tests only (LLM disabled)
-make test-llm-off
-
-# View coverage in browser
-make test-html
-```
-
-### Test Status (Data Pipeline)
-
-- **Tests:** 45 tests implemented
-- **Pass Rate:** 39/45 (86.7%)
-- **Coverage:** 46% of data_pipeline.py
-- **Execution Time:** ~8 seconds
-- **Approach:** All LLM functions mocked, synthetic test data (no external dependencies)
-
-### Test Status (API Endpoints)
-
-- **Tests:** 49 tests implemented
-- **Pass Rate:** 49/49 (100%)
-- **Coverage:** 80% of src/api.py
-- **Execution Time:** ~9.7 seconds
-- **Framework:** Flask with mocked BundleRecommendationEngine
-- **Approach:** All endpoints tested with @patch decorator (zero model loading cost)
-- **Endpoints Covered:** 10/10 (health, recommenders, bundles, bundles/batch, cross-sell, stats, static files, error handlers)
-
-### Key Features
-
-✅ **Mock LLM Functions** - All LLM calls mocked via `monkeypatch` for speed and consistency (zero API calls)  
-✅ **Synthetic Test Data** - Realistic fixtures (100-500 rows) generated programmatically for fast, repeatable tests  
-✅ **Coverage Reporting** - Terminal and HTML reports with CI/CD integration (`--cov-fail-under=80`)  
-✅ **Configurable LLM** - Same tests work with LLM enabled/disabled via environment variables or fixtures  
-
-### Available Commands
-
-```bash
-make test              # Full suite with coverage
-make test-quick        # Minimal output
-make test-verbose      # Full output
-make test-coverage     # Terminal coverage report
-make test-html         # HTML coverage report (opens browser)
-make test-llm-off      # Fastest (LLM disabled)
-make test-llm-on       # Integration tests (LLM mocked)
-make test-file FILE=   # Run specific test file
-make test-func FUNC=   # Run specific test function
-make test-failed       # Re-run previously failed tests
-```
-
-### Manual Testing
-
-```bash
-# Activate environment
-source venv/bin/activate
-
-# Run all tests with pytest directly
-pytest tests/ -v
-
-# Run specific test file
-pytest tests/test_data_pipeline.py -v
-
-# Run specific test class
-pytest tests/test_data_pipeline.py::TestDataPipelineBasics -v
-
-# Run with coverage (terminal + HTML)
-pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
-```
-
-### Comprehensive Testing Documentation
-
-For detailed testing information including:
-- Test organization and structure
-- LLM mocking strategy
-- How to add new tests
-- CI/CD integration
-- Performance benchmarks
-- Troubleshooting
-
-See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for complete documentation.
+Run `pytest tests/ -v` for comprehensive test suite covering data pipeline, recommendation engine, API endpoints, and integration tests. All LLM functions are mocked for speed and consistency. See [TESTING_GUIDE.md](TESTING_GUIDE.md) for detailed testing documentation, mocking strategy, and available commands.
 
 ## ⚙️ Configuration
 
-### Key Parameters
+Edit `.env` to configure bundle generation parameters (MIN_SUPPORT, MIN_CONFIDENCE, MAX_BUNDLE_SIZE), training settings (TRAIN_TEST_SPLIT, RANDOM_STATE), and resource allocation (N_JOBS). Use `python main.py --bundles-only` to quickly test different parameters without full reprocessing.
 
-Edit `.env` to configure the system:
+For complete configuration reference, defaults, and LLM settings, see [QUICK_REF.md](QUICK_REF.md#configuration-reference).
 
-```bash
-# Bundle Generation
-MIN_SUPPORT=0.02              # Minimum frequency for bundles (2% of transactions)
-MIN_CONFIDENCE=0.5            # Minimum confidence for association rules
-MAX_BUNDLE_SIZE=5             # Maximum products per bundle
+## 📚 Documentation Map
 
-# Training
-TRAIN_TEST_SPLIT=0.8          # Train/test split ratio
-RANDOM_STATE=42               # Random seed for reproducibility
-N_JOBS=-1                     # CPU cores (-1 = all available)
-```
-
-**Experimenting with Bundle Parameters:**  
-Use `--bundles-only` to quickly test different `MIN_SUPPORT`, `MIN_CONFIDENCE`, or `MAX_BUNDLE_SIZE` settings without reprocessing the entire dataset:
-
-```bash
-# 1. Prepare data once (with default settings)
-python main.py --prepare
-
-# 2. Edit .env to change MIN_SUPPORT or MIN_CONFIDENCE
-# For example: MIN_SUPPORT=0.01, MIN_CONFIDENCE=0.3
-
-# 3. Regenerate bundles only (skips all preprocessing)
-python main.py --bundles-only
-
-# 4. Compare results with different settings
-python main.py --bundles-only  # Repeat after each parameter change
-```
-
-For complete configuration options, see [QUICK_REF.md](QUICK_REF.md#configuration-reference).
-
-## 📚 Documentation
-
-Comprehensive documentation is available for different use cases:
-
-- **[QUICK_REF.md](QUICK_REF.md)** - Command reference, API examples, troubleshooting, and debugging
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System design, algorithms, data splitting strategies, and performance
-- **[DOCKER_README.md](DOCKER_README.md)** - Docker deployment and container orchestration
-- **[CATEGORY_ENRICHMENT.md](CATEGORY_ENRICHMENT.md)** - LLM-powered category enrichment feature
-- **[WORKFLOW_DIAGRAMS.md](WORKFLOW_DIAGRAMS.md)** - Visual system workflows and diagrams
-- **[AGENTS.md](AGENTS.md)** - Best practices for AI agents working on this codebase
-- **[data/About_Dataset.md](data/About_Dataset.md)** - Dataset information and schema
-
-### Documentation Guide
-
-**New to the project?**
-1. Start with this README (you're here!)
-2. Run Quick Start above
-3. Explore [examples_basic.py](examples_basic.py)
-4. Check [QUICK_REF.md](QUICK_REF.md) for commands
-
-**Want to use the API?**
-- See [QUICK_REF.md](QUICK_REF.md) for all API examples
-- Run `python main.py --api` for REST API
-- Check `src/web/index.html` for web UI
-
-**Need technical details?**
-- [ARCHITECTURE.md](ARCHITECTURE.md) for system design
-- [ARCHITECTURE.md](ARCHITECTURE.md#algorithm-implementations) for algorithm explanations
-- [ARCHITECTURE.md](ARCHITECTURE.md#data-splitting-strategies) for training strategies
-
-**Deploying to production?**
-- [DOCKER_README.md](DOCKER_README.md) for containerization
-- [QUICK_REF.md](QUICK_REF.md#troubleshooting-guide) for common issues
-- [ARCHITECTURE.md](ARCHITECTURE.md#performance-characteristics) for performance metrics
-
-## 🛠️ CLI Commands
-
-```bash
-# Complete pipeline (recommended for first run)
-python main.py --full
-
-# Individual steps
-python main.py --download        # Download dataset from Kaggle
-python main.py --prepare         # Process and prepare data
-python main.py --train           # Train all models
-python main.py --demo            # Run demonstration
-
-# Start REST API server
-python main.py --api
-
-# Open web UI
-open http://localhost:5000
+| Goal | Read | Details |
+|------|------|----------|
+| **Getting started** | This README + [examples_basic.py](examples_basic.py) | Installation, quick run, simple example |
+| **Commands & API** | [QUICK_REF.md](QUICK_REF.md) | All CLI commands, Python API, configuration options |
+| **System design** | [ARCHITECTURE.md](ARCHITECTURE.md) | Algorithms, data splitting, performance metrics |
+| **Web API & UI** | [QUICK_REF.md](QUICK_REF.md), run `python main.py --api` | REST endpoints, example requests |
+| **Testing** | [TESTING_GUIDE.md](TESTING_GUIDE.md) | Test organization, mocking strategy, CI/CD |
+| **Docker deployment** | [DOCKER_README.md](DOCKER_README.md) | Build, run, and orchestrate containers |
+| **LLM features** | [CATEGORY_ENRICHMENT.md](CATEGORY_ENRICHMENT.md) | Category enrichment, out-of-stock handling |
+| **System workflows** | [WORKFLOW_DIAGRAMS.md](WORKFLOW_DIAGRAMS.md) | Visual diagrams and process flows |
+| **Dataset info** | [data/About_Dataset.md](data/About_Dataset.md) | Schema, features, data preparation |
+| **Troubleshooting** | [QUICK_REF.md](QUICK_REF.md#troubleshooting-guide) | Common issues and solutions |
 
 
-# Force reprocessing (ignore cache)
-python main.py --prepare --reprocess
-
-# Regenerate bundles only (experiment with bundle parameters)
-python main.py --bundles-only    # Uses cached processed data, regenerates bundles
-```
-
-For complete command reference and troubleshooting, see [QUICK_REF.md](QUICK_REF.md).
 
 ## 🐳 Docker Deployment
 
@@ -420,12 +246,7 @@ ToDo
 
 ## 📞 Support
 
-Having issues? Check our troubleshooting resources:
-
-1. **[QUICK_REF.md](QUICK_REF.md#troubleshooting-guide)** - Common issues and solutions
-2. **Run tests**: `pytest tests/ -v` to verify installation
-3. **Check logs**: `recommendation_service.log` for error details
-4. **Review examples**: Working code in `examples_*.py` files
+Having issues? See [QUICK_REF.md](QUICK_REF.md#troubleshooting-guide) for common issues, run `pytest tests/ -v` to verify installation, or review working examples in `examples_*.py` files.
 
 ---
 
