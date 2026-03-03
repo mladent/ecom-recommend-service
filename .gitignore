@@ -78,3 +78,4 @@ models/
 *.joblib
 *.h5
 data/category_enrichment_cache.json
+mlruns/
