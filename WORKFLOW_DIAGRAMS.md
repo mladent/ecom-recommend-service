@@ -455,3 +455,25 @@ Customer Request
 ```
 
 These diagrams illustrate how the recommendation system works from data ingestion through model training to final recommendations delivery.
+
+## 6. High-Level Brand Diagram
+
+```mermaid
+---
+title: E-Recommender System
+---
+flowchart TB
+      I([Data]) --> E((Bundle AI))
+      M([ML Models]) --> E
+      L([LLM Enrichment]) --> E
+      E --> A([API & Web])
+      A --> V([Business Value])
+
+      classDef core fill:#0f172a,stroke:#0f172a,stroke-width:3px,color:#ffffff;
+      classDef source fill:#e2e8f0,stroke:#334155,stroke-width:2px,color:#0f172a;
+      classDef output fill:#d1fae5,stroke:#047857,stroke-width:2px,color:#064e3b;
+
+      class E core;
+      class I,M,L source;
+      class A,V output;
+```
